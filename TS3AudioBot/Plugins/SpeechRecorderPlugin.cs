@@ -5,10 +5,13 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Threading.Tasks;
+using System.Buffers.Binary;
 using TS3AudioBot;
 using TS3AudioBot.Plugins;
 using TS3AudioBot.CommandSystem;
+using TSLib;          // 【修复点】：引入核心类型 ClientId, Codec
 using TSLib.Audio;
 using TSLib.Full;
 using Newtonsoft.Json;
@@ -22,6 +25,8 @@ namespace TS3AudioBot.Plugins
         public Bot Bot { get; set; }
         public TsFullClient TsFullClient { get; set; }
         public Ts3Client Ts3Client { get; set; }
+
+        private const bool EXPORT_AS_WAV = true;
 
         private class UserRecordState
         {
@@ -48,7 +53,7 @@ namespace TS3AudioBot.Plugins
         private bool _isPluginRunning;
         private bool _isRecordingEnabled;
         private string _currentSessionFolder;
-        private ClientMixdown _mixdownInstance;
+        private MyVoiceReceiver _voiceReceiver;
         private readonly object _jsonLock = new object();
 
         public void Initialize()
@@ -59,95 +64,62 @@ namespace TS3AudioBot.Plugins
             _isRecordingEnabled = false;
 
             Task.Run(() => SilenceDetectorLoop());
-            Log.Info("[STT录音插件] 加载成功！");
+            string formatInfo = EXPORT_AS_WAV ? "WAV (48kHz 16-bit Stereo 双声道)" : "PCM";
+            Log.Info($"[STT录音插件] 加载成功！导出格式: {formatInfo}");
         }
 
-        private ClientMixdown FindMixdown(object obj, int depth = 0)
+        [Command("stt")]
+        public string CommandStt(string action)
         {
-            if (obj == null || depth > 10) return null;
-            if (obj is ClientMixdown mix) return mix;
-
-            var outStreamProp = obj.GetType().GetProperty("OutStream", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (outStreamProp != null)
+            if (action.ToLower() == "start")
             {
-                var next = outStreamProp.GetValue(obj);
-                var res = FindMixdown(next, depth + 1);
-                if (res != null) return res;
-            }
+                if (_isRecordingEnabled) return "录音已经在进行中了！";
 
-            if (obj is IEnumerable enumerable)
-            {
-                foreach (var item in enumerable)
+                if (TsFullClient != null)
                 {
-                    var res = FindMixdown(item, depth + 1);
-                    if (res != null) return res;
+                    if (_voiceReceiver == null)
+                    {
+                        _voiceReceiver = new MyVoiceReceiver();
+                        TsFullClient.OutStream = _voiceReceiver;
+                        Log.Info("[STT录音插件] 已成功装载 Opus 解码管道！");
+                    }
+
+                    _voiceReceiver.OnVoiceData -= HandleUserVoiceData;
+                    _voiceReceiver.OnVoiceData += HandleUserVoiceData;
                 }
-            }
-            return null;
-        }
-
-        [Command("stt start")]
-        public string CommandStartRecording()
-        {
-            if (_isRecordingEnabled) return "录音已经在进行中了！";
-
-            if (TsFullClient != null)
-            {
-                // 1. 尝试寻找现有的音频管道
-                _mixdownInstance = FindMixdown(TsFullClient.OutStream);
-                
-                // 2. 核心修复：如果没找到（因为 TS3AudioBot 默认不处理接收语音）
-                // 我们自己创建一个混音器，并强行插进 TsFullClient 的 OutStream 接收口！
-                if (_mixdownInstance == null)
+                else
                 {
-                    _mixdownInstance = new ClientMixdown();
-                    
-                    if (TsFullClient.OutStream == null)
-                    {
-                        TsFullClient.OutStream = _mixdownInstance;
-                        Log.Info("[STT录音插件] 原生音频管道为空，已成功装载全新的 ClientMixdown！");
-                    }
-                    else
-                    {
-                        // 万一有别的不知道什么管道占着，我们强行覆盖接管
-                        TsFullClient.OutStream = _mixdownInstance;
-                        Log.Info("[STT录音插件] 已覆盖现有音频管道并装载 ClientMixdown！");
-                    }
+                    return "🔴 启动失败：无法获取底层客户端。";
                 }
 
-                // 3. 挂载我们在 TSLib 里加的后门事件
-                _mixdownInstance.OnUserVoiceDataReceived -= HandleUserVoiceData;
-                _mixdownInstance.OnUserVoiceDataReceived += HandleUserVoiceData;
+                string timeStr = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                _currentSessionFolder = Path.Combine("Recordings", $"Session_{timeStr}");
+                Directory.CreateDirectory(_currentSessionFolder);
+
+                _sessionRecords.Clear();
+                _isRecordingEnabled = true;
+
+                string fmt = EXPORT_AS_WAV ? "WAV" : "PCM";
+                return $"🔴 已开始多角色语音录制！({fmt} 双声道模式)\n保存路径: {_currentSessionFolder}";
+            }
+            else if (action.ToLower() == "stop")
+            {
+                if (!_isRecordingEnabled) return "当前没有在录音。";
+
+                _isRecordingEnabled = false;
+
+                foreach (var kvp in _activeRecords)
+                {
+                    CloseAndSaveRecord(kvp.Key, kvp.Value);
+                }
+                _activeRecords.Clear();
+
+                return $"⏹ 已停止录音！\n所有文件及 index.json 已保存至: {_currentSessionFolder}";
             }
             else
             {
-                return "🔴 启动失败：无法获取底层客户端，请确认机器人已连接服务器。";
+                return "⚠️ 未知指令。请使用 !stt start 或 !stt stop";
             }
-
-            string timeStr = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            _currentSessionFolder = Path.Combine("Recordings", $"Session_{timeStr}");
-            Directory.CreateDirectory(_currentSessionFolder);
-
-            _sessionRecords.Clear();
-            _isRecordingEnabled = true;
-
-            return $"🔴 已开始多角色语音录制！\n保存路径: {_currentSessionFolder}";
-        }
-
-        [Command("stt stop")]
-        public string CommandStopRecording()
-        {
-            if (!_isRecordingEnabled) return "当前没有在录音。";
-
-            _isRecordingEnabled = false;
-
-            foreach (var kvp in _activeRecords)
-            {
-                CloseAndSaveRecord(kvp.Key, kvp.Value);
-            }
-            _activeRecords.Clear();
-
-            return $"⏹ 已停止录音！\n所有文件及 index.json 已保存至: {_currentSessionFolder}";
         }
 
         private string GetClientName(ushort clientId)
@@ -189,12 +161,21 @@ namespace TS3AudioBot.Plugins
             {
                 string startTimeStr = now.ToString("yyyy-MM-dd_HH-mm-ss.fff");
                 string clientName = GetClientName(id);
-                string fileName = $"{startTimeStr}_{id}.pcm";
+                
+                string extension = EXPORT_AS_WAV ? ".wav" : ".pcm";
+                string fileName = $"{startTimeStr}_{id}{extension}";
                 string filePath = Path.Combine(_currentSessionFolder, fileName);
+
+                var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read);
+                
+                if (EXPORT_AS_WAV)
+                {
+                    stream.Write(new byte[44], 0, 44);
+                }
 
                 return new UserRecordState
                 {
-                    AudioStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read),
+                    AudioStream = stream,
                     StartTime = now,
                     LastSpeakTime = now,
                     FileName = fileName,
@@ -209,10 +190,37 @@ namespace TS3AudioBot.Plugins
             }
         }
 
+        private void WriteWavHeader(FileStream stream, int dataLength)
+        {
+            stream.Seek(0, SeekOrigin.Begin);
+            using (var writer = new BinaryWriter(stream, Encoding.ASCII, true))
+            {
+                writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+                writer.Write(36 + dataLength);
+                writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+                writer.Write(Encoding.ASCII.GetBytes("fmt "));
+                writer.Write(16);
+                writer.Write((short)1);
+                writer.Write((short)2);
+                writer.Write(48000);
+                writer.Write(48000 * 2 * 2);
+                writer.Write((short)4);
+                writer.Write((short)16);
+                writer.Write(Encoding.ASCII.GetBytes("data"));
+                writer.Write(dataLength);
+            }
+        }
+
         private void CloseAndSaveRecord(ushort clientId, UserRecordState state)
         {
             lock (state.AudioStream)
             {
+                if (EXPORT_AS_WAV)
+                {
+                    int dataLength = (int)state.AudioStream.Length - 44;
+                    WriteWavHeader(state.AudioStream, dataLength);
+                }
+
                 state.AudioStream.Flush();
                 state.AudioStream.Close();
                 state.AudioStream.Dispose();
@@ -251,8 +259,9 @@ namespace TS3AudioBot.Plugins
                 if (_isRecordingEnabled)
                 {
                     var now = DateTime.Now;
+                    
                     var stoppedUsers = _activeRecords
-                        .Where(kvp => (now - kvp.Value.LastSpeakTime).TotalMilliseconds > 1000)
+                        .Where(kvp => (now - kvp.Value.LastSpeakTime).TotalMilliseconds > 3000)
                         .ToList();
 
                     foreach (var kvp in stoppedUsers)
@@ -270,11 +279,81 @@ namespace TS3AudioBot.Plugins
         public void Dispose()
         {
             _isPluginRunning = false;
-            if (_mixdownInstance != null)
-                _mixdownInstance.OnUserVoiceDataReceived -= HandleUserVoiceData;
+            
+            if (_voiceReceiver != null)
+            {
+                _voiceReceiver.OnVoiceData -= HandleUserVoiceData;
+                _voiceReceiver.Dispose();
+                
+                if (TsFullClient != null && TsFullClient.OutStream == _voiceReceiver)
+                {
+                    TsFullClient.OutStream = null;
+                }
+            }
 
             if (_isRecordingEnabled)
-                CommandStopRecording();
+                CommandStt("stop");
+        }
+
+        public class MyVoiceReceiver : IAudioPassiveConsumer, IDisposable
+        {
+            public bool Active => true;
+            public event Action<ushort, byte[]> OnVoiceData;
+
+            private DecoderPipe _decoderPipe;
+            private MyDecoderConsumer _consumer;
+
+            public MyVoiceReceiver()
+            {
+                _decoderPipe = new DecoderPipe();
+                _consumer = new MyDecoderConsumer(this);
+                _decoderPipe.OutStream = _consumer;
+            }
+
+            public void Write(Span<byte> data, Meta meta)
+            {
+                if (data.Length < 5) return;
+
+                ushort clientId = BinaryPrimitives.ReadUInt16BigEndian(data.Slice(2, 2));
+                byte codecByte = data[4];
+
+                meta ??= new Meta();
+                
+                // 【修复点 1 & 2】：强制转换 ClientId，因为 MetaIn 是 struct，默认就是安全的可以直接读取其 Whisper 属性
+                meta.In = new MetaIn { Sender = (TSLib.ClientId)clientId, Whisper = meta.In.Whisper };
+
+                // 【修复点 3】：使用 TSLib 命名空间下的 Codec 枚举
+                if (codecByte == 4) meta.Codec = TSLib.Codec.OpusVoice;
+                else if (codecByte == 5) meta.Codec = TSLib.Codec.OpusMusic;
+                else return; 
+
+                _decoderPipe.Write(data.Slice(5), meta);
+            }
+
+            public void Dispose()
+            {
+                _decoderPipe?.Dispose();
+            }
+
+            private class MyDecoderConsumer : IAudioPassiveConsumer
+            {
+                public bool Active => true;
+                private MyVoiceReceiver _parent;
+
+                public MyDecoderConsumer(MyVoiceReceiver parent)
+                {
+                    _parent = parent;
+                }
+
+                public void Write(Span<byte> data, Meta meta)
+                {
+                    // 【修复点 4】：使用 .Value != 0 避免强类型重载符号比较错误
+                    if (meta != null && meta.In.Sender.Value != 0)
+                    {
+                        _parent.OnVoiceData?.Invoke(meta.In.Sender.Value, data.ToArray());
+                    }
+                }
+            }
         }
     }
 }
