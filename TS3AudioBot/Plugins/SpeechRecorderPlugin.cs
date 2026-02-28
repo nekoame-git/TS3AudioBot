@@ -26,7 +26,20 @@ namespace TS3AudioBot.Plugins
         public TsFullClient TsFullClient { get; set; }
         public Ts3Client Ts3Client { get; set; }
 
+        // ==========================================
+        // 【配置区】 你可以在这里随时修改录音参数
+        // ==========================================
+        
+        // true = WAV格式 (自带文件头，双击可播), false = PCM纯数据流
         private const bool EXPORT_AS_WAV = true;
+        
+        // 说话断句的静音等待时间 (毫秒)。1000 = 停顿1秒钟即封包切割
+        private const int SILENCE_SPLIT_MS = 1000;
+        
+        // 频道内无任何语音活动的自动停止时间 (毫秒)。600000 = 10分钟
+        private const int AUTO_STOP_TIMEOUT_MS = 600000;
+
+        // ==========================================
 
         private class UserRecordState
         {
@@ -54,6 +67,7 @@ namespace TS3AudioBot.Plugins
         private bool _isRecordingEnabled;
         private string _currentSessionFolder;
         private MyVoiceReceiver _voiceReceiver;
+        private DateTime _lastGlobalVoiceTime;
         private readonly object _jsonLock = new object();
 
         public void Initialize()
@@ -98,9 +112,10 @@ namespace TS3AudioBot.Plugins
 
                 _sessionRecords.Clear();
                 _isRecordingEnabled = true;
+                _lastGlobalVoiceTime = DateTime.Now;
 
                 string fmt = EXPORT_AS_WAV ? "WAV" : "PCM";
-                return $"🔴 已开始多角色语音录制！({fmt} 双声道模式)\n保存路径: {_currentSessionFolder}";
+                return $"🔴 已开始多角色语音录制！({fmt} 双声道模式)\n保存路径: {_currentSessionFolder}\n⚠️ 若超过 10 分钟无人说话将自动停止。";
             }
             else if (action.ToLower() == "stop")
             {
@@ -122,12 +137,8 @@ namespace TS3AudioBot.Plugins
             }
         }
 
-        // ==========================================
-        // 【核心修复】内存级闪电获取真实用户名
-        // ==========================================
         private string GetClientName(ushort clientId)
         {
-            // 策略 1: 从底层的 Book (频道人员实时花名册) 中获取，速度最快，必定有数据
             try
             {
                 if (TsFullClient != null)
@@ -159,7 +170,6 @@ namespace TS3AudioBot.Plugins
             }
             catch { }
 
-            // 策略 2: 尝试从 TS3AudioBot 上层的 clientbuffer (全局客户端缓存列表) 获取
             try
             {
                 if (Ts3Client != null)
@@ -194,8 +204,8 @@ namespace TS3AudioBot.Plugins
             if (!_isRecordingEnabled) return;
 
             var now = DateTime.Now;
+            _lastGlobalVoiceTime = now; 
 
-            // 只有当某人开始讲新的一句话时，才会执行 GetClientName，因此对性能零损耗
             var userState = _activeRecords.GetOrAdd(clientId, id =>
             {
                 string startTimeStr = now.ToString("yyyy-MM-dd_HH-mm-ss.fff");
@@ -298,9 +308,26 @@ namespace TS3AudioBot.Plugins
                 if (_isRecordingEnabled)
                 {
                     var now = DateTime.Now;
+
+                    if ((now - _lastGlobalVoiceTime).TotalMilliseconds > AUTO_STOP_TIMEOUT_MS)
+                    {
+                        Log.Info("[STT录音插件] 超过规定时间无语音活动，触发自动停止录制。");
+                        
+                        try 
+                        {
+                            if (Ts3Client != null) 
+                            {
+                                _ = Ts3Client.SendChannelMessage($"⏹ 超过 {AUTO_STOP_TIMEOUT_MS / 60000} 分钟无语音活动，已自动停止录音并封包。");
+                            }
+                        } 
+                        catch { }
+
+                        CommandStt("stop");
+                        continue; 
+                    }
                     
                     var stoppedUsers = _activeRecords
-                        .Where(kvp => (now - kvp.Value.LastSpeakTime).TotalMilliseconds > 3000)
+                        .Where(kvp => (now - kvp.Value.LastSpeakTime).TotalMilliseconds > SILENCE_SPLIT_MS)
                         .ToList();
 
                     foreach (var kvp in stoppedUsers)
@@ -351,7 +378,8 @@ namespace TS3AudioBot.Plugins
 
             public void Write(Span<byte> data, Meta meta)
             {
-                if (data.Length < 5) return;
+                // 【修复点1】: 拦截并丢弃过短的信号包（防止数组越界和 Opus 报错）
+                if (data.Length <= 5) return;
 
                 ushort clientId = BinaryPrimitives.ReadUInt16BigEndian(data.Slice(2, 2));
                 byte codecByte = data[4];
@@ -364,7 +392,16 @@ namespace TS3AudioBot.Plugins
                 else if (codecByte == 5) meta.Codec = TSLib.Codec.OpusMusic;
                 else return; 
 
-                _decoderPipe.Write(data.Slice(5), meta);
+                // 【修复点2】: 增加异常捕捉层。
+                // 这样即使收到加密错误、丢包或异常的控制网络包，插件只会安静地丢弃它，绝不让程序崩溃！
+                try
+                {
+                    _decoderPipe.Write(data.Slice(5), meta);
+                }
+                catch (Exception ex)
+                {
+                    // 默默丢掉这个坏掉的包，不造成任何影响
+                }
             }
 
             public void Dispose()
