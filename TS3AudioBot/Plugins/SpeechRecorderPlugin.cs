@@ -11,7 +11,7 @@ using System.Buffers.Binary;
 using TS3AudioBot;
 using TS3AudioBot.Plugins;
 using TS3AudioBot.CommandSystem;
-using TSLib;          // 【修复点】：引入核心类型 ClientId, Codec
+using TSLib;
 using TSLib.Audio;
 using TSLib.Full;
 using Newtonsoft.Json;
@@ -122,32 +122,70 @@ namespace TS3AudioBot.Plugins
             }
         }
 
+        // ==========================================
+        // 【核心修复】内存级闪电获取真实用户名
+        // ==========================================
         private string GetClientName(ushort clientId)
         {
+            // 策略 1: 从底层的 Book (频道人员实时花名册) 中获取，速度最快，必定有数据
             try
             {
-                if (Ts3Client != null)
+                if (TsFullClient != null)
                 {
-                    var method = Ts3Client.GetType().GetMethod("GetCachedClientById") 
-                              ?? Ts3Client.GetType().GetMethod("GetClientById")
-                              ?? Ts3Client.GetType().GetMethod("GetClientInfoById");
-                              
-                    if (method != null)
+                    var book = TsFullClient.GetType().GetProperty("Book")?.GetValue(TsFullClient);
+                    if (book != null)
                     {
-                        var info = method.Invoke(Ts3Client, new object[] { clientId });
-                        if (info != null)
+                        var clientsObj = book.GetType().GetProperty("Clients")?.GetValue(book);
+                        if (clientsObj is IDictionary dict)
                         {
-                            var nickProp = info.GetType().GetProperty("Nickname") ?? info.GetType().GetProperty("Name");
-                            if (nickProp != null)
+                            foreach (DictionaryEntry entry in dict)
                             {
-                                string nickname = nickProp.GetValue(info) as string;
-                                if (!string.IsNullOrWhiteSpace(nickname)) return nickname;
+                                var clientObj = entry.Value;
+                                var idObj = clientObj.GetType().GetProperty("Id")?.GetValue(clientObj);
+                                if (idObj != null)
+                                {
+                                    var valObj = idObj.GetType().GetProperty("Value")?.GetValue(idObj);
+                                    if (valObj is ushort val && val == clientId)
+                                    {
+                                        var name = clientObj.GetType().GetProperty("Name")?.GetValue(clientObj) as string 
+                                                ?? clientObj.GetType().GetProperty("Nickname")?.GetValue(clientObj) as string;
+                                        if (!string.IsNullOrWhiteSpace(name)) return name;
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
             catch { }
+
+            // 策略 2: 尝试从 TS3AudioBot 上层的 clientbuffer (全局客户端缓存列表) 获取
+            try
+            {
+                if (Ts3Client != null)
+                {
+                    var field = Ts3Client.GetType().GetField("clientbuffer", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (field != null && field.GetValue(Ts3Client) is IEnumerable buffer)
+                    {
+                        foreach (var clientObj in buffer)
+                        {
+                            var idObj = clientObj.GetType().GetProperty("ClientId")?.GetValue(clientObj);
+                            if (idObj != null)
+                            {
+                                var valObj = idObj.GetType().GetProperty("Value")?.GetValue(idObj);
+                                if (valObj is ushort val && val == clientId)
+                                {
+                                    var name = clientObj.GetType().GetProperty("Name")?.GetValue(clientObj) as string 
+                                            ?? clientObj.GetType().GetProperty("Nickname")?.GetValue(clientObj) as string;
+                                    if (!string.IsNullOrWhiteSpace(name)) return name;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
             return $"UnknownUser_{clientId}";
         }
 
@@ -157,6 +195,7 @@ namespace TS3AudioBot.Plugins
 
             var now = DateTime.Now;
 
+            // 只有当某人开始讲新的一句话时，才会执行 GetClientName，因此对性能零损耗
             var userState = _activeRecords.GetOrAdd(clientId, id =>
             {
                 string startTimeStr = now.ToString("yyyy-MM-dd_HH-mm-ss.fff");
@@ -319,10 +358,8 @@ namespace TS3AudioBot.Plugins
 
                 meta ??= new Meta();
                 
-                // 【修复点 1 & 2】：强制转换 ClientId，因为 MetaIn 是 struct，默认就是安全的可以直接读取其 Whisper 属性
                 meta.In = new MetaIn { Sender = (TSLib.ClientId)clientId, Whisper = meta.In.Whisper };
 
-                // 【修复点 3】：使用 TSLib 命名空间下的 Codec 枚举
                 if (codecByte == 4) meta.Codec = TSLib.Codec.OpusVoice;
                 else if (codecByte == 5) meta.Codec = TSLib.Codec.OpusMusic;
                 else return; 
@@ -347,7 +384,6 @@ namespace TS3AudioBot.Plugins
 
                 public void Write(Span<byte> data, Meta meta)
                 {
-                    // 【修复点 4】：使用 .Value != 0 避免强类型重载符号比较错误
                     if (meta != null && meta.In.Sender.Value != 0)
                     {
                         _parent.OnVoiceData?.Invoke(meta.In.Sender.Value, data.ToArray());
