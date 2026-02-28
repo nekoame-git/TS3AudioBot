@@ -20,6 +20,11 @@ namespace TSLib.Audio
 
 		private readonly Dictionary<ClientId, ClientMix> mixdownBuffer = new Dictionary<ClientId, ClientMix>();
 
+		// =========================================================
+		// 【修改点 1 / 共 2 处】：新增一个公开事件，用于向外部广播每个人的音频流
+		// =========================================================
+		public event Action<ushort, byte[]> OnUserVoiceDataReceived;
+
 		public void Write(Span<byte> data, Meta? meta)
 		{
 			if (data.IsEmpty || meta is null)
@@ -33,6 +38,13 @@ namespace TSLib.Audio
 			}
 
 			mix.Write(data, meta);
+
+			// =========================================================
+			// 【修改点 2 / 共 2 处】：每当有数据写入时，触发事件广播出去
+			// meta.In.Sender.Value 是说话者的 Client ID，data.ToArray() 是 PCM 音频字节
+			// =========================================================
+			OnUserVoiceDataReceived?.Invoke(meta.In.Sender.Value, data.ToArray());
+
 			/*
 			List<KeyValuePair<ushort, ClientMix>> remove = null;
 			foreach (var item in mixdownBuffer)
