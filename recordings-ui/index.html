@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TS3 录音回放</title>
+  <title>TS3AudioBot 控制台 + 录音回放</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = { darkMode: 'class' }</script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
@@ -35,11 +35,12 @@
   <!-- ============================
        顶部导航栏
   ============================= -->
-  <header class="sticky top-0 z-20 bg-slate-900/80 backdrop-blur border-b border-slate-800 px-5 py-3 flex items-center gap-3">
+  <header class="sticky top-0 z-20 bg-slate-900/80 backdrop-blur border-b border-slate-800 px-5 py-3">
+    <div class="flex items-center gap-3">
 
     <!-- 返回按钮 -->
     <button
-      x-show="view === 'detail'"
+      x-show="page === 'recordings' && view === 'detail'"
       @click="backToList()"
       class="text-slate-400 hover:text-white transition-colors text-sm flex items-center gap-1.5 mr-1">
       <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -51,15 +52,33 @@
     <!-- 标题 -->
     <div class="flex-1 min-w-0">
       <h1 class="text-base font-semibold text-white truncate">
-        <span x-show="view === 'sessions'">🎙 TS3 录音回放</span>
-        <span x-show="view === 'detail'" x-text="currentSession ? formatSessionTime(currentSession.startTime) : ''"></span>
+        <span x-show="page === 'recordings' && view === 'sessions'">🎙 TS3 录音回放</span>
+        <span x-show="page === 'recordings' && view === 'detail'" x-text="currentSession ? formatSessionTime(currentSession.startTime) : ''"></span>
+        <span x-show="page === 'home'">🏠 TS3AB 控制台</span>
+        <span x-show="page === 'overview'">📈 系统概览</span>
+        <span x-show="page === 'bots'">🤖 Bot 管理</span>
+        <span x-show="page === 'bot'">🎛 Bot 控制</span>
+        <span x-show="page === 'server'">🌲 Server 树</span>
+        <span x-show="page === 'settings'">⚙ Settings</span>
+        <span x-show="page === 'playlists'">🎵 Playlists</span>
       </h1>
-      <p x-show="view === 'detail'" class="text-xs text-slate-500 mt-0.5"
+      <p x-show="page === 'recordings' && view === 'detail'" class="text-xs text-slate-500 mt-0.5"
          x-text="currentSession ? currentSession.id : ''"></p>
     </div>
 
+    <div class="hidden md:flex items-center gap-1 text-xs">
+      <button @click="openPage('home')" :class="page==='home' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Home</button>
+      <button @click="openPage('overview')" :class="page==='overview' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Overview</button>
+      <button @click="openPage('bots')" :class="page==='bots' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Bots</button>
+      <button @click="openPage('bot')" :class="page==='bot' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Bot</button>
+      <button @click="openPage('server')" :class="page==='server' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Server</button>
+      <button @click="openPage('settings')" :class="page==='settings' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Settings</button>
+      <button @click="openPage('playlists')" :class="page==='playlists' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Playlists</button>
+      <button @click="openPage('recordings')" :class="page==='recordings' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Recordings</button>
+    </div>
+
     <!-- 右侧操作 -->
-    <div x-show="view === 'sessions'" class="flex items-center gap-2">
+    <div x-show="page === 'recordings' && view === 'sessions'" class="flex items-center gap-2">
       <button @click="loadRecordingDirs()" title="刷新录音目录列表"
         class="px-2 py-1.5 text-xs text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700">
         目录
@@ -72,7 +91,7 @@
       </button>
     </div>
 
-    <div x-show="view === 'detail'" class="flex items-center gap-2">
+    <div x-show="page === 'recordings' && view === 'detail'" class="flex items-center gap-2">
       <span class="text-xs text-slate-500" x-text="transcribedCount + '/' + entries.length + ' 已转录'"></span>
       <button
         @click="transcribeAll()"
@@ -91,12 +110,258 @@
         </span>
       </button>
     </div>
+    </div>
+
+    <div class="mt-2 md:hidden flex flex-wrap gap-1 text-xs">
+      <button @click="openPage('home')" :class="page==='home' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Home</button>
+      <button @click="openPage('overview')" :class="page==='overview' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Overview</button>
+      <button @click="openPage('bots')" :class="page==='bots' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Bots</button>
+      <button @click="openPage('bot')" :class="page==='bot' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Bot</button>
+      <button @click="openPage('server')" :class="page==='server' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Server</button>
+      <button @click="openPage('settings')" :class="page==='settings' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Settings</button>
+      <button @click="openPage('playlists')" :class="page==='playlists' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Playlists</button>
+      <button @click="openPage('recordings')" :class="page==='recordings' ? 'bg-cyan-700 text-white' : 'bg-slate-800 text-slate-300'" class="px-2 py-1 rounded">Recordings</button>
+    </div>
+
+    <div x-show="notice.show" class="mt-2 rounded border px-3 py-2 text-xs"
+         :class="notice.type==='error' ? 'border-rose-700 bg-rose-950 text-rose-100' : 'border-emerald-700 bg-emerald-950 text-emerald-100'">
+      <div class="flex items-center justify-between gap-2">
+        <span x-text="notice.message"></span>
+        <button @click="notice.show=false" class="text-slate-300 hover:text-white">关闭</button>
+      </div>
+    </div>
   </header>
 
   <!-- ============================
        主内容区
   ============================= -->
-  <main class="max-w-4xl mx-auto px-4 py-5">
+  <main class="max-w-6xl mx-auto px-4 py-5">
+    <div x-show="page === 'home'" class="fade-in space-y-4">
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+        <div class="text-sm font-semibold mb-2">API 登录</div>
+        <div class="grid sm:grid-cols-[1fr_1fr_auto] gap-2">
+          <input x-model="authUser" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-sm" placeholder="TS3 UID (username)" />
+          <input x-model="authToken" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-sm" placeholder="API token" />
+          <button @click="saveAuth()" class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1.5 text-sm">保存登录</button>
+        </div>
+        <div class="mt-2 text-xs text-slate-400">endpoint: <span x-text="ts3abStatus.base || '(未配置)'"></span></div>
+      </div>
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+        <div class="flex items-center gap-2">
+          <button @click="checkTs3abStatus()" class="bg-slate-800 hover:bg-slate-700 rounded px-2 py-1 text-xs">检查连接</button>
+          <button @click="authProbe()" class="bg-slate-800 hover:bg-slate-700 rounded px-2 py-1 text-xs">鉴权测试(json merge)</button>
+          <span class="text-xs text-slate-400" x-text="ts3abStatus.reachable ? 'WebAPI 可达' : 'WebAPI 未连通'"></span>
+        </div>
+        <div class="mt-2 text-xs text-slate-500" x-text="ts3abStatus.error || ''"></div>
+      </div>
+    </div>
+
+    <div x-show="page === 'overview'" class="fade-in grid lg:grid-cols-2 gap-4">
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+        <div class="text-sm font-semibold mb-2">版本信息</div>
+        <pre class="text-xs text-slate-300 whitespace-pre-wrap" x-text="pretty(overview.version)"></pre>
+      </div>
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+        <div class="text-sm font-semibold mb-2">系统信息</div>
+        <pre class="text-xs text-slate-300 whitespace-pre-wrap" x-text="pretty(overview.system)"></pre>
+      </div>
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-4 lg:col-span-2">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="text-sm font-semibold">远程版本列表 (Versions.csv)</div>
+          <button @click="loadVersionCatalog(true)" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1 text-xs">刷新</button>
+          <span class="text-[11px] text-slate-500" x-text="versionCatalog.fetchedAt ? ('更新时间: ' + fmtTs(versionCatalog.fetchedAt)) : '尚未加载'"></span>
+        </div>
+        <div class="text-[11px] text-slate-500 break-all mb-2" x-text="'来源: ' + (versionCatalog.source || '-')"></div>
+        <div class="text-xs text-rose-300 mb-2" x-show="versionCatalog.error" x-text="versionCatalog.error"></div>
+        <div class="overflow-auto max-h-80 border border-slate-800 rounded">
+          <table class="min-w-full text-xs">
+            <thead class="bg-slate-800 text-slate-300 sticky top-0">
+              <tr>
+                <template x-for="h in versionHeaders()" :key="'vh_'+h">
+                  <th class="text-left px-2 py-1 whitespace-nowrap" x-text="h"></th>
+                </template>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="(row, idx) in versionRows()" :key="'vr_'+idx">
+                <tr class="border-t border-slate-800">
+                  <template x-for="h in versionHeaders()" :key="'vc_'+idx+'_'+h">
+                    <td class="px-2 py-1 whitespace-nowrap" x-text="row[h] || ''"></td>
+                  </template>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div x-show="page === 'bots'" class="fade-in space-y-3">
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-3">
+        <div class="flex flex-wrap gap-2 items-center text-xs">
+          <button @click="refreshBots()" class="bg-slate-800 hover:bg-slate-700 rounded px-2 py-1">刷新</button>
+          <input x-model="newBotName" class="bg-slate-950 border border-slate-700 rounded px-2 py-1" placeholder="新模板名" />
+          <button @click="createBot()" class="bg-emerald-700 hover:bg-emerald-600 rounded px-2 py-1">创建模板</button>
+          <input x-model="quickConnectAddr" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 min-w-[14rem]" placeholder="快速连接地址" />
+          <button @click="quickConnectBot()" class="bg-cyan-700 hover:bg-cyan-600 rounded px-2 py-1">Quick Connect</button>
+        </div>
+      </div>
+      <div class="space-y-2">
+        <template x-for="b in bots" :key="(b.Id ?? 'off') + '_' + (b.Name || '')">
+          <div class="rounded-xl border border-slate-800 bg-slate-900 p-3 flex flex-wrap gap-2 items-center text-xs">
+            <div class="min-w-[3rem] text-slate-400">#<span x-text="b.Id === null ? 'OFF' : b.Id"></span></div>
+            <div class="min-w-[12rem]" x-text="b.Name || '(unknown)'"></div>
+            <div class="min-w-[14rem] text-slate-400" x-text="b.Server || '-'"></div>
+            <div class="min-w-[6rem]" x-text="b.Status || '-'"></div>
+            <button x-show="b.Id === null && b.Name" @click="startBotTemplate(b.Name)" class="bg-emerald-700 hover:bg-emerald-600 rounded px-2 py-1">Start</button>
+            <button x-show="b.Id !== null" @click="stopBot(b.Id)" class="bg-rose-700 hover:bg-rose-600 rounded px-2 py-1">Stop</button>
+            <button x-show="b.Name" @click="deleteBot(b.Name)" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Delete</button>
+            <button x-show="b.Id !== null" @click="selectBot(b); openPage('bot')" class="bg-cyan-700 hover:bg-cyan-600 rounded px-2 py-1">控制台</button>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <div x-show="page === 'bot'" class="fade-in space-y-3">
+      <div x-show="selectedBotId === null" class="rounded-xl border border-slate-800 bg-slate-900 p-4 text-xs">请先在 Bots 页面选择在线 bot。</div>
+      <div x-show="selectedBotId !== null" class="space-y-3">
+        <div class="rounded-xl border border-slate-800 bg-slate-900 p-3 text-xs flex flex-wrap gap-2 items-center">
+          <button @click="refreshBotRuntime()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">刷新状态</button>
+          <input x-model="botMediaUrl" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 min-w-[16rem]" placeholder="媒体链接" />
+          <button @click="playUrl()" class="bg-emerald-700 hover:bg-emerald-600 rounded px-2 py-1">Play</button>
+          <button @click="addUrl()" class="bg-cyan-700 hover:bg-cyan-600 rounded px-2 py-1">Add</button>
+          <button @click="botSimple('pause')" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Pause</button>
+          <button @click="botSimple('next')" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Next</button>
+          <button @click="botSimple('previous')" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Prev</button>
+          <input x-model="seekSeconds" type="number" class="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1" placeholder="秒" />
+          <button @click="seekTo()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Seek</button>
+          <input x-model="setVolumeValue" type="number" class="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1" placeholder="音量" />
+          <button @click="setVolume()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Volume</button>
+          <button @click="toggleRepeat()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Repeat: <span x-text="botState.repeat"></span></button>
+          <button @click="toggleRandom()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Random: <span x-text="botState.random"></span></button>
+        </div>
+        <div class="grid lg:grid-cols-3 gap-3">
+          <div class="rounded-xl border border-slate-800 bg-slate-900 p-3"><div class="text-sm font-semibold mb-2">Bot Info</div><pre class="text-xs text-slate-300 whitespace-pre-wrap" x-text="pretty(botState.info)"></pre></div>
+          <div class="rounded-xl border border-slate-800 bg-slate-900 p-3"><div class="text-sm font-semibold mb-2">当前歌曲</div><pre class="text-xs text-slate-300 whitespace-pre-wrap" x-text="pretty(botState.song)"></pre></div>
+          <div class="rounded-xl border border-slate-800 bg-slate-900 p-3"><div class="text-sm font-semibold mb-2">队列 / 音量</div><pre class="text-xs text-slate-300 whitespace-pre-wrap" x-text="pretty({queue: botState.queue, volume: botState.volume})"></pre></div>
+        </div>
+        <div class="rounded-xl border border-slate-800 bg-slate-900 p-3">
+          <div class="text-sm font-semibold mb-2">封面</div>
+          <div class="text-xs text-slate-400 break-all" x-text="botState.cover || '-'"></div>
+          <img x-show="botState.cover" :src="botState.cover" class="mt-2 w-full max-h-64 object-contain rounded border border-slate-700" />
+        </div>
+      </div>
+    </div>
+
+    <div x-show="page === 'server'" class="fade-in space-y-3">
+      <div x-show="selectedBotId === null" class="rounded-xl border border-slate-800 bg-slate-900 p-4 text-xs">请先选择在线 bot。</div>
+      <div x-show="selectedBotId !== null" class="rounded-xl border border-slate-800 bg-slate-900 p-3 text-xs space-y-2">
+        <div class="flex flex-wrap gap-2 items-center">
+          <button @click="refreshServer()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">刷新</button>
+          <input x-model="moveChannelId" class="w-32 bg-slate-950 border border-slate-700 rounded px-2 py-1" placeholder="频道ID" />
+          <input x-model="moveChannelPassword" class="w-32 bg-slate-950 border border-slate-700 rounded px-2 py-1" placeholder="密码(可选)" />
+          <button @click="moveBotToChannel()" class="bg-cyan-700 hover:bg-cyan-600 rounded px-2 py-1">Move</button>
+          <input x-model="renameBotText" class="w-44 bg-slate-950 border border-slate-700 rounded px-2 py-1" placeholder="bot新名称" />
+          <button @click="renameBot()" class="bg-emerald-700 hover:bg-emerald-600 rounded px-2 py-1">Rename</button>
+        </div>
+        <div class="flex flex-wrap gap-2 items-center">
+          <input x-model="subChannelId" class="w-32 bg-slate-950 border border-slate-700 rounded px-2 py-1" placeholder="订阅频道ID" />
+          <button @click="subscribeChannel()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Subscribe</button>
+          <button @click="unsubscribeChannel()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Unsubscribe</button>
+          <button @click="whisperSubscription()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Whisper Sub</button>
+          <button @click="whisperOff()" class="bg-rose-700 hover:bg-rose-600 rounded px-2 py-1">Whisper Off</button>
+        </div>
+      </div>
+      <div x-show="selectedBotId !== null" class="grid lg:grid-cols-2 gap-3">
+        <div class="rounded-xl border border-slate-800 bg-slate-900 p-3"><div class="text-sm font-semibold mb-2">Server Tree</div><pre class="text-xs text-slate-300 whitespace-pre-wrap" x-text="pretty(serverState.tree)"></pre></div>
+        <div class="rounded-xl border border-slate-800 bg-slate-900 p-3"><div class="text-sm font-semibold mb-2">Whisper</div><pre class="text-xs text-slate-300 whitespace-pre-wrap" x-text="pretty(serverState.whisper)"></pre></div>
+      </div>
+    </div>
+
+    <div x-show="page === 'settings'" class="fade-in space-y-3">
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-3 text-xs flex flex-wrap gap-2 items-center">
+        <select x-model="settingsMode" class="bg-slate-950 border border-slate-700 rounded px-2 py-1">
+          <option value="online">在线 Bot 设置</option>
+          <option value="offline">离线模板设置</option>
+        </select>
+        <input x-show="settingsMode==='offline'" x-model="settingsTemplate" class="bg-slate-950 border border-slate-700 rounded px-2 py-1" placeholder="模板名" />
+        <select x-show="settingsMode==='offline'" x-model="settingsTemplate" class="bg-slate-950 border border-slate-700 rounded px-2 py-1">
+          <option value="">从离线模板选择</option>
+          <template x-for="t in offlineTemplates()" :key="'tpl_'+t">
+            <option :value="t" x-text="t"></option>
+          </template>
+        </select>
+        <button @click="loadSettings()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">读取设置</button>
+      </div>
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-3 text-xs">
+        <div class="grid lg:grid-cols-[1fr_1fr_auto] gap-2">
+          <input x-model="settingsSetPath" class="bg-slate-950 border border-slate-700 rounded px-2 py-1" placeholder="路径，如 connect.address" />
+          <input x-model="settingsSetValue" class="bg-slate-950 border border-slate-700 rounded px-2 py-1" placeholder="值" />
+          <button @click="setSettingValue()" class="bg-emerald-700 hover:bg-emerald-600 rounded px-2 py-1">应用</button>
+        </div>
+      </div>
+      <div class="rounded-xl border border-slate-800 bg-slate-900 p-3"><pre class="text-xs text-slate-300 whitespace-pre-wrap" x-text="pretty(settingsData)"></pre></div>
+    </div>
+
+    <div x-show="page === 'playlists'" class="fade-in space-y-3">
+      <div x-show="selectedBotId === null" class="rounded-xl border border-slate-800 bg-slate-900 p-4 text-xs">请先选择在线 bot。</div>
+      <div x-show="selectedBotId !== null" class="rounded-xl border border-slate-800 bg-slate-900 p-3 text-xs space-y-3">
+        <div class="flex flex-wrap gap-2 items-center">
+          <button @click="loadPlaylists()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">刷新歌单</button>
+          <input x-model="newPlaylistId" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 w-24" placeholder="ID" />
+          <input x-model="newPlaylistTitle" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 w-48" placeholder="标题" />
+          <button @click="createPlaylist()" class="bg-emerald-700 hover:bg-emerald-600 rounded px-2 py-1">创建</button>
+        </div>
+        <div class="grid lg:grid-cols-[1fr_1.2fr] gap-3">
+          <div class="rounded border border-slate-800 p-2">
+            <template x-for="pl in playlists" :key="String(pl.Id ?? pl.id ?? pl.Name ?? Math.random())">
+              <div class="border border-slate-800 rounded p-2 mb-2">
+                <div class="font-medium" x-text="(pl.Id ?? pl.id ?? '-') + ' · ' + (pl.Title || pl.Name || '-')"></div>
+                <div class="mt-2 flex flex-wrap gap-1">
+                  <button @click="selectPlaylist(pl)" class="bg-cyan-700 hover:bg-cyan-600 rounded px-2 py-1">编辑</button>
+                  <button @click="playPlaylist(pl)" class="bg-emerald-700 hover:bg-emerald-600 rounded px-2 py-1">播放</button>
+                  <button @click="deletePlaylist(pl)" class="bg-rose-700 hover:bg-rose-600 rounded px-2 py-1">删除</button>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div class="rounded border border-slate-800 p-2" x-show="selectedPlaylistId">
+            <div class="mb-2">编辑歌单 #<span x-text="selectedPlaylistId"></span></div>
+            <div class="flex flex-wrap gap-2 items-center mb-2">
+              <input x-model="playlistRenameValue" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 w-44" placeholder="新标题" />
+              <button @click="renamePlaylist()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">重命名</button>
+              <input x-model="playlistPlayIndex" type="number" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 w-20" placeholder="索引" />
+              <button @click="playPlaylistByIndex()" class="bg-emerald-700 hover:bg-emerald-600 rounded px-2 py-1">从索引播放</button>
+            </div>
+            <div class="flex flex-wrap gap-2 items-center mb-2">
+              <input x-model="playlistAddLink" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 min-w-[16rem]" placeholder="Add 链接" />
+              <button @click="addPlaylistItem()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Add</button>
+              <input x-model="playlistImportLink" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 min-w-[16rem]" placeholder="Import 链接" />
+              <button @click="importPlaylist()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Import</button>
+              <button @click="loadPlaylistItems()" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">刷新条目</button>
+            </div>
+            <div class="space-y-2 max-h-[24rem] overflow-auto">
+              <template x-for="(it, idx) in playlistItems" :key="'pli_'+idx">
+                <div class="border border-slate-800 rounded p-2">
+                  <div class="text-slate-300 break-all" x-text="'[' + idx + '] ' + (it.Title || it.Name || it.title || '(未命名)')"></div>
+                  <div class="text-slate-500 text-[11px] break-all mt-1" x-text="it.Link || it.Url || it.link || '-'"></div>
+                  <div class="mt-2 flex flex-wrap gap-1 items-center">
+                    <button @click="deletePlaylistItem(idx)" class="bg-rose-700 hover:bg-rose-600 rounded px-2 py-1">删</button>
+                    <input :value="it._rename || ''" @input="it._rename = $event.target.value" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 w-40" placeholder="新名称" />
+                    <button @click="renamePlaylistItem(idx, it._rename || '')" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">改名</button>
+                    <input :value="it._moveTo || ''" @input="it._moveTo = $event.target.value" type="number" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 w-20" placeholder="到" />
+                    <button @click="movePlaylistItem(idx, it._moveTo)" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">移动</button>
+                    <button @click="getPlaylistItem(idx)" class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">详情</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div x-show="page === 'recordings'">
     <div x-show="view === 'sessions'" class="mb-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
       <div class="text-xs text-slate-400 mb-2">录音目录（限制在项目目录内）</div>
       <div class="flex flex-wrap items-center gap-2">
@@ -260,6 +525,7 @@
       <!-- 底部占位 -->
       <div class="h-8"></div>
     </div>
+    </div>
 
   </main>
 
@@ -290,12 +556,49 @@
     // ─── 主应用 ───
     function app() {
       return {
+        page: 'home',
         view: 'sessions',
+        notice: { show: false, type: 'ok', message: '' },
+        authUser: '',
+        authToken: '',
+        ts3abStatus: { base: '', reachable: false, error: '' },
+        overview: { version: null, system: null },
+        versionCatalog: { source: '', items: [], error: '', fetchedAt: 0 },
+        bots: [],
+        newBotName: '',
+        quickConnectAddr: '',
+        selectedBotId: null,
+        selectedBotName: '',
+        botMediaUrl: '',
+        seekSeconds: '',
+        setVolumeValue: '',
+        botState: { info: null, song: null, queue: null, repeat: '-', random: '-', volume: '-', cover: '' },
+        serverState: { tree: null, whisper: null },
+        moveChannelId: '',
+        moveChannelPassword: '',
+        subChannelId: '',
+        renameBotText: '',
+        settingsMode: 'online',
+        settingsTemplate: '',
+        settingsSetPath: '',
+        settingsSetValue: '',
+        settingsData: null,
+        playlists: [],
+        newPlaylistId: '',
+        newPlaylistTitle: '',
+        selectedPlaylistId: '',
+        selectedPlaylistTitle: '',
+        playlistItems: [],
+        playlistAddLink: '',
+        playlistImportLink: '',
+        playlistPlayIndex: '',
+        playlistRenameValue: '',
+        pollTimer: null,
         sessions: [],
         currentSession: null,
         entries: [],
-        transcriptions: {},  // { AudioFile: 'text' }
-        transcribing: {},    // { AudioFile: true }
+        transcriptions: {},
+        transcribing: {},
         loading: true,
         isTranscribingAll: false,
         recordingDirs: [],
@@ -304,10 +607,530 @@
         currentRecordingDir: "",
         recordingDirHint: "",
 
-        // ── 初始化 ──
         async init() {
+          this.authUser = localStorage.getItem('ts3ab_auth_user') || '';
+          this.authToken = localStorage.getItem('ts3ab_auth_token') || '';
+          await this.checkTs3abStatus();
+          await this.refreshOverview();
+          await this.loadVersionCatalog(false);
+          await this.refreshBots();
           await this.loadRecordingDirs();
           await this.loadSessions();
+          this.startPolling();
+        },
+
+        toastOk(msg) { this.notice = { show: true, type: 'ok', message: String(msg || '') }; },
+        toastErr(msg) { this.notice = { show: true, type: 'error', message: String(msg || '') }; },
+        saveAuth() {
+          localStorage.setItem('ts3ab_auth_user', this.authUser || '');
+          localStorage.setItem('ts3ab_auth_token', this.authToken || '');
+          this.toastOk('登录信息已保存');
+        },
+        pretty(v) {
+          if (v === null || v === undefined) return '-';
+          try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+        },
+        fmtTs(ts) {
+          if (!ts) return '-';
+          const d = new Date(Number(ts) * 1000);
+          if (Number.isNaN(d.getTime())) return '-';
+          return d.toLocaleString();
+        },
+        versionHeaders() {
+          const rows = Array.isArray(this.versionCatalog.items) ? this.versionCatalog.items : [];
+          if (!rows.length) return [];
+          return Object.keys(rows[0] || {});
+        },
+        versionRows() {
+          const rows = Array.isArray(this.versionCatalog.items) ? this.versionCatalog.items : [];
+          return rows.slice(0, 120);
+        },
+        offlineTemplates() {
+          const names = [];
+          for (const b of (this.bots || [])) {
+            if (b && b.Id === null && b.Name) names.push(String(b.Name));
+          }
+          return [...new Set(names)];
+        },
+        ensureBot() {
+          if (this.selectedBotId === null) {
+            this.toastErr('请先在 Bots 页面选择在线 bot');
+            return false;
+          }
+          return true;
+        },
+        async parseResp(r) {
+          const t = await r.text();
+          if (!t) return null;
+          try { return JSON.parse(t); } catch { return { text: t }; }
+        },
+        async ts3abCall(payload) {
+          const r = await fetch('/api/ts3ab/call', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ...payload,
+              authUser: this.authUser || undefined,
+              authToken: this.authToken || undefined,
+            }),
+          });
+          const data = await this.parseResp(r);
+          if (!r.ok) throw new Error((data && (data.ErrorMessage || data.error || data.text)) || r.statusText);
+          return data;
+        },
+        async ts3abBotCall(botId, command) {
+          const r = await fetch('/api/ts3ab/bot_call', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              botId, command,
+              authUser: this.authUser || undefined,
+              authToken: this.authToken || undefined,
+            }),
+          });
+          const data = await this.parseResp(r);
+          if (!r.ok) throw new Error((data && (data.ErrorMessage || data.error || data.text)) || r.statusText);
+          return data;
+        },
+        async checkTs3abStatus() {
+          try {
+            const r = await fetch('/api/ts3ab/status');
+            this.ts3abStatus = await r.json();
+          } catch (e) {
+            this.ts3abStatus = { base: '', reachable: false, error: String(e) };
+          }
+        },
+        async authProbe() {
+          try {
+            await this.ts3abCall({ segments: ['json', 'merge'] });
+            this.toastOk('鉴权通过');
+          } catch (e) {
+            this.toastErr('鉴权失败: ' + e.message);
+          }
+        },
+        startPolling() {
+          if (this.pollTimer) clearInterval(this.pollTimer);
+          this.pollTimer = setInterval(async () => {
+            try {
+              if (this.page === 'overview') await this.refreshOverview();
+              if (this.page === 'bots') await this.refreshBots();
+              if (this.page === 'bot' && this.selectedBotId !== null) await this.refreshBotRuntime();
+            } catch {}
+          }, 10000);
+        },
+        openPage(p) {
+          this.page = p;
+          if (p === 'overview') { this.refreshOverview(); this.loadVersionCatalog(false); }
+          if (p === 'bots') this.refreshBots();
+          if (p === 'bot') this.refreshBotRuntime();
+          if (p === 'server') this.refreshServer();
+          if (p === 'settings') this.loadSettings();
+          if (p === 'playlists') this.loadPlaylists();
+          if (p === 'recordings') this.loadSessions();
+        },
+
+        async refreshOverview() {
+          try {
+            this.overview.version = await this.ts3abCall({ segments: ['version'] });
+            this.overview.system = await this.ts3abCall({ segments: ['system', 'info'] });
+          } catch (e) {
+            this.toastErr('概览读取失败: ' + e.message);
+          }
+        },
+        async loadVersionCatalog(force) {
+          try {
+            const r = await fetch('/api/ts3ab/versions' + (force ? '?force=1' : ''));
+            const d = await r.json();
+            if (!r.ok) throw new Error(d.error || r.statusText);
+            this.versionCatalog = {
+              source: d.source || '',
+              items: Array.isArray(d.items) ? d.items : [],
+              error: d.error || '',
+              fetchedAt: Number(d.fetchedAt || 0),
+            };
+          } catch (e) {
+            this.versionCatalog.error = String(e.message || e);
+          }
+        },
+        async refreshBots() {
+          try {
+            const data = await this.ts3abCall({ segments: ['bot', 'list'] });
+            this.bots = Array.isArray(data) ? data : [];
+          } catch (e) {
+            this.bots = [];
+            this.toastErr('bot 列表失败: ' + e.message);
+          }
+        },
+        selectBot(b) {
+          this.selectedBotId = Number(b.Id);
+          this.selectedBotName = b.Name || '';
+          this.toastOk(`已选择 bot #${this.selectedBotId}`);
+        },
+        async createBot() {
+          const name = (this.newBotName || '').trim();
+          if (!name) return;
+          try {
+            await this.ts3abCall({ segments: ['settings', 'create', name] });
+            this.newBotName = '';
+            await this.refreshBots();
+          } catch (e) { this.toastErr('创建模板失败: ' + e.message); }
+        },
+        async deleteBot(name) {
+          if (!name || !confirm(`确认删除模板 ${name} ?`)) return;
+          try {
+            await this.ts3abCall({ segments: ['settings', 'delete', name] });
+            await this.refreshBots();
+          } catch (e) { this.toastErr('删除模板失败: ' + e.message); }
+        },
+        async startBotTemplate(name) {
+          try {
+            await this.ts3abCall({ segments: ['bot', 'connect', 'template', name] });
+            await this.refreshBots();
+          } catch (e) { this.toastErr('启动失败: ' + e.message); }
+        },
+        async stopBot(botId) {
+          try {
+            await this.ts3abBotCall(botId, ['bot', 'disconnect']);
+            await this.refreshBots();
+          } catch (e) { this.toastErr('停止失败: ' + e.message); }
+        },
+        async quickConnectBot() {
+          const addr = (this.quickConnectAddr || '').trim();
+          if (!addr) return;
+          try {
+            await this.ts3abCall({ segments: ['bot', 'connect', 'to', addr] });
+            this.quickConnectAddr = '';
+            await this.refreshBots();
+          } catch (e) { this.toastErr('Quick connect 失败: ' + e.message); }
+        },
+
+        scalar(v) {
+          if (Array.isArray(v)) return this.scalar(v[0]);
+          if (v === null || v === undefined) return '-';
+          if (typeof v === 'object') return '-';
+          return String(v);
+        },
+        async refreshBotRuntime() {
+          if (!this.ensureBot()) return;
+          try {
+            const [info, song, queue, repeat, random, volume, cover] = await Promise.all([
+              this.ts3abBotCall(this.selectedBotId, ['bot', 'info']),
+              this.ts3abBotCall(this.selectedBotId, ['song']),
+              this.ts3abBotCall(this.selectedBotId, ['info', '@-1', '5']).catch(() => null),
+              this.ts3abBotCall(this.selectedBotId, ['repeat']).catch(() => null),
+              this.ts3abBotCall(this.selectedBotId, ['random']).catch(() => null),
+              this.ts3abBotCall(this.selectedBotId, ['volume']).catch(() => null),
+              this.ts3abBotCall(this.selectedBotId, ['data', 'song', 'cover', 'get']).catch(() => null),
+            ]);
+            this.botState.info = info;
+            this.botState.song = song;
+            this.botState.queue = queue;
+            this.botState.repeat = this.scalar(repeat);
+            this.botState.random = this.scalar(random);
+            this.botState.volume = this.scalar(volume);
+            this.botState.cover = (cover && (cover.text || cover.url || cover.Url || this.scalar(cover))) || '';
+          } catch (e) { this.toastErr('Bot 状态读取失败: ' + e.message); }
+        },
+        async botSimple(cmd) {
+          if (!this.ensureBot()) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, [cmd]);
+            await this.refreshBotRuntime();
+          } catch (e) { this.toastErr(`${cmd} 失败: ${e.message}`); }
+        },
+        async playUrl() {
+          if (!this.ensureBot()) return;
+          const url = (this.botMediaUrl || '').trim();
+          if (!url) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['play', url]);
+            await this.refreshBotRuntime();
+          } catch (e) { this.toastErr('play 失败: ' + e.message); }
+        },
+        async addUrl() {
+          if (!this.ensureBot()) return;
+          const url = (this.botMediaUrl || '').trim();
+          if (!url) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['add', url]);
+            await this.refreshBotRuntime();
+          } catch (e) { this.toastErr('add 失败: ' + e.message); }
+        },
+        async seekTo() {
+          if (!this.ensureBot()) return;
+          const sec = Number(this.seekSeconds);
+          if (Number.isNaN(sec)) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['seek', String(sec)]);
+            await this.refreshBotRuntime();
+          } catch (e) { this.toastErr('seek 失败: ' + e.message); }
+        },
+        async setVolume() {
+          if (!this.ensureBot()) return;
+          const vol = Number(this.setVolumeValue);
+          if (Number.isNaN(vol)) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['volume', String(vol)]);
+            await this.refreshBotRuntime();
+          } catch (e) { this.toastErr('volume 失败: ' + e.message); }
+        },
+        async toggleRepeat() {
+          if (!this.ensureBot()) return;
+          const next = this.botState.repeat.toLowerCase() === 'true' ? 'false' : 'true';
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['repeat', next]);
+            await this.refreshBotRuntime();
+          } catch (e) { this.toastErr('repeat 失败: ' + e.message); }
+        },
+        async toggleRandom() {
+          if (!this.ensureBot()) return;
+          const next = this.botState.random.toLowerCase() === 'true' ? 'false' : 'true';
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['random', next]);
+            await this.refreshBotRuntime();
+          } catch (e) { this.toastErr('random 失败: ' + e.message); }
+        },
+        async refreshServer() {
+          if (!this.ensureBot()) return;
+          try {
+            const [tree, whisper] = await Promise.all([
+              this.ts3abBotCall(this.selectedBotId, ['server', 'tree']),
+              this.ts3abBotCall(this.selectedBotId, ['whisper', 'list']).catch(() => this.ts3abBotCall(this.selectedBotId, ['whisper', 'subscription']).catch(() => null)),
+            ]);
+            this.serverState.tree = tree;
+            this.serverState.whisper = whisper;
+          } catch (e) { this.toastErr('Server 读取失败: ' + e.message); }
+        },
+        async moveBotToChannel() {
+          if (!this.ensureBot()) return;
+          const ch = (this.moveChannelId || '').trim();
+          if (!ch) return;
+          const pw = (this.moveChannelPassword || '').trim();
+          const cmd = pw ? ['bot', 'move', ch, pw] : ['bot', 'move', ch];
+          try {
+            await this.ts3abBotCall(this.selectedBotId, cmd);
+            await this.refreshServer();
+          } catch (e) { this.toastErr('move 失败: ' + e.message); }
+        },
+        async renameBot() {
+          if (!this.ensureBot()) return;
+          const name = (this.renameBotText || '').trim();
+          if (!name) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['bot', 'name', name]);
+            await this.refreshBots();
+            await this.refreshServer();
+          } catch (e) { this.toastErr('rename 失败: ' + e.message); }
+        },
+        async subscribeChannel() {
+          if (!this.ensureBot()) return;
+          const ch = (this.subChannelId || '').trim();
+          if (!ch) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['subscribe', 'channel', ch]);
+            await this.refreshServer();
+          } catch (e) { this.toastErr('subscribe 失败: ' + e.message); }
+        },
+        async unsubscribeChannel() {
+          if (!this.ensureBot()) return;
+          const ch = (this.subChannelId || '').trim();
+          if (!ch) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['unsubscribe', 'channel', ch]);
+            await this.refreshServer();
+          } catch (e) { this.toastErr('unsubscribe 失败: ' + e.message); }
+        },
+        async whisperSubscription() {
+          if (!this.ensureBot()) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['whisper', 'subscription']);
+            await this.refreshServer();
+          } catch (e) { this.toastErr('whisper subscription 失败: ' + e.message); }
+        },
+        async whisperOff() {
+          if (!this.ensureBot()) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['whisper', 'off']);
+            await this.refreshServer();
+          } catch (e) { this.toastErr('whisper off 失败: ' + e.message); }
+        },
+
+        async loadSettings() {
+          try {
+            if (this.settingsMode === 'online') {
+              if (!this.ensureBot()) return;
+              this.settingsData = await this.ts3abBotCall(this.selectedBotId, ['settings', 'get']);
+            } else {
+              const t = (this.settingsTemplate || '').trim();
+              if (!t) { this.settingsData = { hint: '请输入模板名' }; return; }
+              this.settingsData = await this.ts3abCall({ segments: ['settings', 'bot', 'get', t] });
+            }
+          } catch (e) { this.toastErr('读取设置失败: ' + e.message); }
+        },
+        async setSettingValue() {
+          const path = (this.settingsSetPath || '').trim();
+          if (!path) return;
+          const valRaw = (this.settingsSetValue || '').trim();
+          let value = valRaw;
+          if (valRaw === 'true' || valRaw === 'false') value = valRaw;
+          else if (/^-?\d+(\.\d+)?$/.test(valRaw)) value = valRaw;
+          try {
+            if (this.settingsMode === 'online') {
+              if (!this.ensureBot()) return;
+              await this.ts3abBotCall(this.selectedBotId, ['settings', 'set', path, value]);
+            } else {
+              const t = (this.settingsTemplate || '').trim();
+              if (!t) { this.toastErr('离线模式需要模板名'); return; }
+              await this.ts3abCall({ segments: ['settings', 'bot', 'set', t, path, value] });
+            }
+            await this.loadSettings();
+            this.toastOk('设置已应用');
+          } catch (e) { this.toastErr('写入设置失败: ' + e.message); }
+        },
+
+        async loadPlaylists() {
+          if (!this.ensureBot()) return;
+          try {
+            const data = await this.ts3abBotCall(this.selectedBotId, ['list', 'list']);
+            this.playlists = Array.isArray(data) ? data : (Array.isArray(data?.Items) ? data.Items : []);
+          } catch (e) { this.toastErr('歌单读取失败: ' + e.message); }
+        },
+        async createPlaylist() {
+          if (!this.ensureBot()) return;
+          const id = (this.newPlaylistId || '').trim();
+          const title = (this.newPlaylistTitle || '').trim();
+          if (!id || !title) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['list', 'create', id, title]);
+            this.newPlaylistId = '';
+            this.newPlaylistTitle = '';
+            await this.loadPlaylists();
+          } catch (e) { this.toastErr('创建歌单失败: ' + e.message); }
+        },
+        playlistIdOf(pl) {
+          return String((pl && (pl.Id ?? pl.id ?? pl.Name ?? pl.name ?? '')) || '');
+        },
+        playlistTitleOf(pl) {
+          return String((pl && (pl.Title || pl.title || pl.Name || pl.name || '')) || '');
+        },
+        async selectPlaylist(pl) {
+          this.selectedPlaylistId = this.playlistIdOf(pl);
+          this.selectedPlaylistTitle = this.playlistTitleOf(pl);
+          this.playlistRenameValue = this.selectedPlaylistTitle;
+          await this.loadPlaylistItems();
+        },
+        async deletePlaylist(pl) {
+          if (!this.ensureBot()) return;
+          const id = this.playlistIdOf(pl);
+          if (!id || !confirm(`确认删除歌单 ${id} ?`)) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['list', 'delete', id]);
+            if (this.selectedPlaylistId === id) {
+              this.selectedPlaylistId = '';
+              this.playlistItems = [];
+            }
+            await this.loadPlaylists();
+          } catch (e) { this.toastErr('删除歌单失败: ' + e.message); }
+        },
+        async playPlaylist(pl) {
+          if (!this.ensureBot()) return;
+          const id = this.playlistIdOf(pl);
+          if (!id) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['list', 'play', id]);
+            this.toastOk('已播放歌单');
+          } catch (e) { this.toastErr('播放歌单失败: ' + e.message); }
+        },
+        async playPlaylistByIndex() {
+          if (!this.ensureBot()) return;
+          const id = (this.selectedPlaylistId || '').trim();
+          if (!id) return;
+          const idx = (this.playlistPlayIndex || '').toString().trim();
+          try {
+            const cmd = idx ? ['list', 'play', id, idx] : ['list', 'play', id];
+            await this.ts3abBotCall(this.selectedBotId, cmd);
+            this.toastOk('播放命令已提交');
+          } catch (e) { this.toastErr('播放失败: ' + e.message); }
+        },
+        async loadPlaylistItems() {
+          if (!this.ensureBot()) return;
+          const id = (this.selectedPlaylistId || '').trim();
+          if (!id) return;
+          try {
+            const data = await this.ts3abBotCall(this.selectedBotId, ['list', 'get', id]);
+            this.playlistItems = Array.isArray(data) ? data : (Array.isArray(data?.Items) ? data.Items : []);
+          } catch (e) { this.toastErr('读取歌单条目失败: ' + e.message); }
+        },
+        async renamePlaylist() {
+          if (!this.ensureBot()) return;
+          const id = (this.selectedPlaylistId || '').trim();
+          const title = (this.playlistRenameValue || '').trim();
+          if (!id || !title) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['list', 'name', id, title]);
+            await this.loadPlaylists();
+            await this.loadPlaylistItems();
+          } catch (e) { this.toastErr('重命名歌单失败: ' + e.message); }
+        },
+        async addPlaylistItem() {
+          if (!this.ensureBot()) return;
+          const id = (this.selectedPlaylistId || '').trim();
+          const link = (this.playlistAddLink || '').trim();
+          if (!id || !link) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['list', 'add', id, link]);
+            this.playlistAddLink = '';
+            await this.loadPlaylistItems();
+          } catch (e) { this.toastErr('添加条目失败: ' + e.message); }
+        },
+        async importPlaylist() {
+          if (!this.ensureBot()) return;
+          const id = (this.selectedPlaylistId || '').trim();
+          const link = (this.playlistImportLink || '').trim();
+          if (!id || !link) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['list', 'import', id, link]);
+            this.playlistImportLink = '';
+            await this.loadPlaylistItems();
+          } catch (e) { this.toastErr('导入歌单失败: ' + e.message); }
+        },
+        async deletePlaylistItem(index) {
+          if (!this.ensureBot()) return;
+          const id = (this.selectedPlaylistId || '').trim();
+          if (!id) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['list', 'item', 'delete', id, String(index)]);
+            await this.loadPlaylistItems();
+          } catch (e) { this.toastErr('删除条目失败: ' + e.message); }
+        },
+        async renamePlaylistItem(index, title) {
+          if (!this.ensureBot()) return;
+          const id = (this.selectedPlaylistId || '').trim();
+          const t = String(title || '').trim();
+          if (!id || !t) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['list', 'item', 'name', id, String(index), t]);
+            await this.loadPlaylistItems();
+          } catch (e) { this.toastErr('条目改名失败: ' + e.message); }
+        },
+        async movePlaylistItem(from, to) {
+          if (!this.ensureBot()) return;
+          const id = (this.selectedPlaylistId || '').trim();
+          const n = Number(to);
+          if (!id || Number.isNaN(n)) return;
+          try {
+            await this.ts3abBotCall(this.selectedBotId, ['list', 'item', 'move', id, String(from), String(n)]);
+            await this.loadPlaylistItems();
+          } catch (e) { this.toastErr('条目移动失败: ' + e.message); }
+        },
+        async getPlaylistItem(index) {
+          if (!this.ensureBot()) return;
+          const id = (this.selectedPlaylistId || '').trim();
+          if (!id) return;
+          try {
+            const d = await this.ts3abBotCall(this.selectedBotId, ['list', 'item', 'get', id, String(index)]);
+            this.toastOk('条目详情: ' + this.pretty(d).slice(0, 220));
+          } catch (e) { this.toastErr('读取条目详情失败: ' + e.message); }
         },
 
         async loadRecordingDirs() {
@@ -357,7 +1180,6 @@
           await this.applyRecordingDir();
         },
 
-        // ── 加载会话列表 ──
         async loadSessions() {
           this.loading = true;
           try {
@@ -373,7 +1195,6 @@
           this.loading = false;
         },
 
-        // ── 打开单个会话 ──
         async openSession(session) {
           this.loading = true;
           this.currentSession = session;
@@ -381,7 +1202,7 @@
           this.transcriptions = {};
           this.transcribing = {};
           try {
-            const r = await fetch(`/api/sessions/${session.id}`);
+            const r = await fetch(`/api/sessions/${encodeURIComponent(session.id)}`);
             if (!r.ok) throw new Error(r.statusText);
             const data = await r.json();
             this.entries = data.sort((a, b) => a.StartOffsetMs - b.StartOffsetMs);
@@ -392,13 +1213,11 @@
           this.loading = false;
         },
 
-        // ── 返回列表 ──
         backToList() {
           this.view = 'sessions';
           this.currentSession = null;
         },
 
-        // ── 单条转录 ──
         async transcribeEntry(entry) {
           const key = entry.AudioFile;
           if (this.transcriptions[key] || this.transcribing[key]) return;
@@ -425,7 +1244,6 @@
           this.transcribing = t;
         },
 
-        // ── 批量转录 ──
         async transcribeAll() {
           if (this.isTranscribingAll) return;
           this.isTranscribingAll = true;
@@ -437,7 +1255,6 @@
           this.isTranscribingAll = false;
         },
 
-        // ── 计算属性 ──
         get uniqueSpeakers() {
           return [...new Set(this.entries.map(e => e.ClientName))];
         },
@@ -449,10 +1266,8 @@
           return Object.keys(this.transcriptions).length;
         },
 
-        // ── 工具函数 ──
         formatSessionTime(str) {
           if (!str) return '';
-          // str: "20241215_143022"
           const m = str.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/);
           if (!m) return str;
           return `${m[1]}-${m[2]}-${m[3]}  ${m[4]}:${m[5]}:${m[6]}`;
@@ -477,7 +1292,7 @@
         speakerText(name) { return SPEAKER_COLORS[speakerIdx(name)].text; },
 
         audioUrl(entry) {
-          return `/api/audio/${this.currentSession.id}/${entry.AudioFile}`;
+          return `/api/audio/${encodeURIComponent(this.currentSession.id)}/${encodeURIComponent(entry.AudioFile)}`;
         }
       };
     }

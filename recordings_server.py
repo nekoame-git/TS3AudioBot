@@ -16,8 +16,10 @@ TS3AudioBot 录音回放 Web 服务器
 import http.server
 import json
 import os
-import sys
-import threading
+import base64
+import csv
+import io
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -36,10 +38,17 @@ _ai_base    = ""
 _ai_key     = ""
 _ai_model   = "whisper-1"
 _recordings_dir = (BASE_DIR / RECORDINGS_DIR).resolve()
+_ts3ab_api_base = "http://127.0.0.1:58913"
+_ts3ab_api_user = ""
+_ts3ab_api_token = ""
+_versions_csv_url = "https://raw.githubusercontent.com/ReSpeak/tsdeclarations/master/Versions.csv"
+_versions_cache = {"fetchedAt": 0.0, "items": [], "source": _versions_csv_url, "error": None}
+_versions_cache_ttl_seconds = 300
 
 
 def load_config():
     global _port, _ai_base, _ai_key, _ai_model, _recordings_dir
+    global _ts3ab_api_base, _ts3ab_api_user, _ts3ab_api_token
     if not os.path.exists(CONFIG_FILE):
         return
     try:
@@ -49,6 +58,9 @@ def load_config():
         _ai_base  = cfg.get("ai_base_url",  _ai_base)
         _ai_key   = cfg.get("ai_api_key",   _ai_key)
         _ai_model = cfg.get("ai_model",     _ai_model)
+        _ts3ab_api_base = str(cfg.get("ts3ab_api_base", _ts3ab_api_base)).strip() or _ts3ab_api_base
+        _ts3ab_api_user = str(cfg.get("ts3ab_api_user", _ts3ab_api_user)).strip()
+        _ts3ab_api_token = str(cfg.get("ts3ab_api_token", _ts3ab_api_token)).strip()
         configured_dir = str(cfg.get("recordings_dir", "")).strip()
         if configured_dir:
             resolved = _resolve_recordings_dir(configured_dir)
@@ -81,6 +93,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
             self._serve_index()
+        elif path == "/api/ts3ab/status":
+            self._api_ts3ab_status()
+        elif path == "/api/ts3ab/versions":
+            self._api_ts3ab_versions()
         elif path == "/api/recordings/dirs":
             self._api_recordings_dirs()
         elif path == "/api/sessions":
@@ -104,6 +120,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/api/transcribe":
             self._api_transcribe()
+        elif path == "/api/ts3ab/call":
+            self._api_ts3ab_call()
+        elif path == "/api/ts3ab/bot_call":
+            self._api_ts3ab_bot_call()
         elif path == "/api/recordings/set":
             self._api_recordings_set()
         else:
@@ -181,31 +201,44 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._respond(404, b"file not found")
             return
 
-        file_size   = filepath.stat().st_size
-        range_hdr   = self.headers.get("Range", "")
-        self.send_response(200)
-        self.send_header("Content-Type", "audio/wav")
-        self.send_header("Accept-Ranges", "bytes")
-        self._cors()
+        file_size = filepath.stat().st_size
+        range_hdr = self.headers.get("Range", "")
 
         if range_hdr.startswith("bytes="):
-            parts = range_hdr[6:].split("-")
-            start = int(parts[0]) if parts[0] else 0
-            end   = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
-            end   = min(end, file_size - 1)
+            parts = range_hdr[6:].split("-", 1)
+            try:
+                start = int(parts[0]) if parts[0] else 0
+                end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
+            except ValueError:
+                self._respond(416, b"invalid range")
+                return
+
+            if start < 0 or end < start or start >= file_size:
+                self._respond(416, b"invalid range")
+                return
+
+            end = min(end, file_size - 1)
             length = end - start + 1
-            self.send_response(206)          # override
+            self.send_response(206)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Accept-Ranges", "bytes")
             self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
             self.send_header("Content-Length", str(length))
+            self._cors()
             self.end_headers()
             with open(filepath, "rb") as f:
                 f.seek(start)
                 self.wfile.write(f.read(length))
-        else:
-            self.send_header("Content-Length", str(file_size))
-            self.end_headers()
-            with open(filepath, "rb") as f:
-                self.wfile.write(f.read())
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(file_size))
+        self._cors()
+        self.end_headers()
+        with open(filepath, "rb") as f:
+            self.wfile.write(f.read())
 
     def _api_transcribe(self):
         if not _ai_base or not _ai_key:
@@ -297,6 +330,96 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "candidates": _discover_recordings_dirs(),
         })
 
+    def _api_ts3ab_status(self):
+        status = {
+            "base": _ts3ab_api_base,
+            "authConfigured": bool(_ts3ab_api_user and _ts3ab_api_token),
+            "reachable": False,
+            "httpStatus": None,
+            "error": None,
+        }
+        try:
+            code, _ = self._ts3ab_get_json(["version"])
+            status["reachable"] = 200 <= code < 300
+            status["httpStatus"] = code
+        except Exception as e:
+            status["error"] = str(e)
+        self._json(status)
+
+    def _api_ts3ab_versions(self):
+        force = str(urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("force", ["0"])[0]).strip() in ("1", "true", "yes")
+        now = time.time()
+        should_refresh = force or (now - float(_versions_cache.get("fetchedAt", 0.0))) > _versions_cache_ttl_seconds
+        if should_refresh:
+            try:
+                _versions_cache.update(_fetch_versions_csv(_versions_csv_url))
+            except Exception as e:
+                _versions_cache["error"] = str(e)
+                _versions_cache["fetchedAt"] = now
+        self._json({
+            "source": _versions_cache.get("source", _versions_csv_url),
+            "items": _versions_cache.get("items", []),
+            "error": _versions_cache.get("error"),
+            "fetchedAt": _versions_cache.get("fetchedAt", 0.0),
+            "cacheTtlSeconds": _versions_cache_ttl_seconds,
+        })
+
+    def _api_ts3ab_call(self):
+        body, err = self._read_json_body()
+        if err:
+            self._json({"error": err}, 400)
+            return
+
+        segments = body.get("segments")
+        raw_path = str(body.get("path", "")).strip()
+        if not isinstance(segments, list):
+            segments = None
+
+        if segments is None and not raw_path:
+            self._json({"error": "需要 segments 或 path"}, 400)
+            return
+
+        try:
+            code, payload = self._ts3ab_get_json(
+                segments=segments,
+                raw_path=raw_path,
+                auth_user=str(body.get("authUser", "")).strip() or None,
+                auth_token=str(body.get("authToken", "")).strip() or None,
+            )
+            self._respond(code, payload, content_type="application/json")
+        except urllib.error.HTTPError as e:
+            self._respond(e.code, e.read(), content_type="application/json")
+        except Exception as e:
+            self._json({"error": f"调用 TS3AB 失败: {e}"}, 502)
+
+    def _api_ts3ab_bot_call(self):
+        body, err = self._read_json_body()
+        if err:
+            self._json({"error": err}, 400)
+            return
+
+        bot_id = body.get("botId")
+        command = body.get("command")
+        if bot_id is None:
+            self._json({"error": "缺少 botId"}, 400)
+            return
+        if not isinstance(command, list) or not command:
+            self._json({"error": "command 必须是非空数组"}, 400)
+            return
+
+        wrapped = ["bot", "use", str(bot_id), f"(/{'/'.join(_encode_api_segment(x) for x in command)})"]
+        try:
+            code, payload = self._ts3ab_get_json(
+                segments=wrapped,
+                auth_user=str(body.get("authUser", "")).strip() or None,
+                auth_token=str(body.get("authToken", "")).strip() or None,
+            )
+            self._respond(code, payload, content_type="application/json")
+        except urllib.error.HTTPError as e:
+            self._respond(e.code, e.read(), content_type="application/json")
+        except Exception as e:
+            self._json({"error": f"调用 TS3AB bot 命令失败: {e}"}, 502)
+
     # ──────────────────────────────────────────
     # 工具方法
     # ──────────────────────────────────────────
@@ -305,6 +428,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _safe_id(s: str) -> bool:
         """防止路径穿越攻击"""
         return s and ".." not in s and "/" not in s and "\\" not in s
+
+    def _read_json_body(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            if length <= 0:
+                return None, "请求体为空"
+            body = json.loads(self.rfile.read(length))
+            if not isinstance(body, dict):
+                return None, "JSON 根节点必须为对象"
+            return body, None
+        except Exception:
+            return None, "无效的 JSON 请求体"
+
+    def _ts3ab_get_json(self, segments=None, raw_path="", auth_user=None, auth_token=None):
+        url = _build_ts3ab_url(_ts3ab_api_base, segments=segments, raw_path=raw_path)
+        req = urllib.request.Request(url, method="GET")
+        user = auth_user if auth_user is not None else _ts3ab_api_user
+        token = auth_token if auth_token is not None else _ts3ab_api_token
+        if user and token:
+            basic = base64.b64encode(f"{user}:{token}".encode("utf-8")).decode("ascii")
+            req.add_header("Authorization", f"Basic {basic}")
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            payload = resp.read()
+            code = getattr(resp, "status", 200)
+        return code, payload
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin",  "*")
@@ -326,6 +474,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 # urllib.parse 需要额外导入
 import urllib.parse
+
+def _encode_api_segment(value):
+    return urllib.parse.quote(str(value), safe="")
+
+
+def _build_ts3ab_url(base, segments=None, raw_path=""):
+    base = (base or "").rstrip("/")
+    if not base:
+        raise ValueError("ts3ab_api_base 未配置")
+
+    if raw_path:
+        if raw_path.startswith("/"):
+            raw_path = raw_path[1:]
+        if not raw_path.startswith("api/"):
+            raw_path = "api/" + raw_path
+        return f"{base}/{raw_path}"
+
+    segments = segments or []
+    path = "/".join(_encode_api_segment(seg) for seg in segments)
+    return f"{base}/api/{path}"
 
 def _is_within(path: Path, parent: Path) -> bool:
     try:
@@ -373,6 +541,29 @@ def _discover_recordings_dirs():
         candidates.add(str(_recordings_dir))
 
     return sorted(candidates)
+
+
+def _fetch_versions_csv(url: str):
+    req = urllib.request.Request(url, method="GET")
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        raw = resp.read().decode("utf-8", errors="replace")
+    sample = raw[:1024]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+    except Exception:
+        dialect = csv.excel
+    reader = csv.DictReader(io.StringIO(raw), dialect=dialect)
+    items = []
+    for row in reader:
+        clean = {str(k).strip(): (str(v).strip() if v is not None else "") for k, v in row.items()}
+        if any(clean.values()):
+            items.append(clean)
+    return {
+        "fetchedAt": time.time(),
+        "items": items,
+        "source": url,
+        "error": None,
+    }
 
 
 # ──────────────────────────────────────────────
