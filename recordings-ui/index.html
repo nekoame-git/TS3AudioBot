@@ -60,6 +60,10 @@
 
     <!-- 右侧操作 -->
     <div x-show="view === 'sessions'" class="flex items-center gap-2">
+      <button @click="loadRecordingDirs()" title="刷新录音目录列表"
+        class="px-2 py-1.5 text-xs text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700">
+        目录
+      </button>
       <button @click="loadSessions()" title="刷新"
         class="p-1.5 text-slate-400 hover:text-white transition-colors rounded-lg hover:bg-slate-800">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -93,6 +97,35 @@
        主内容区
   ============================= -->
   <main class="max-w-4xl mx-auto px-4 py-5">
+    <div x-show="view === 'sessions'" class="mb-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
+      <div class="text-xs text-slate-400 mb-2">录音目录（限制在项目目录内）</div>
+      <div class="flex flex-wrap items-center gap-2">
+        <select x-model="selectedRecordingDir"
+                class="min-w-[18rem] max-w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200">
+          <option value="">请选择目录</option>
+          <template x-for="dir in recordingDirs" :key="dir">
+            <option :value="dir" x-text="dir"></option>
+          </template>
+        </select>
+        <button @click="applyRecordingDir()"
+                class="px-3 py-1.5 text-xs rounded bg-indigo-600 hover:bg-indigo-500 text-white">
+          使用该目录
+        </button>
+      </div>
+      <div class="mt-2 flex flex-wrap items-center gap-2">
+        <input x-model="customRecordingDir"
+               placeholder="或手动输入目录（仅允许项目目录内）"
+               class="min-w-[18rem] max-w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200" />
+        <button @click="applyCustomRecordingDir()"
+                class="px-3 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 text-white">
+          应用手动路径
+        </button>
+      </div>
+      <div class="mt-2 text-[11px] text-slate-500">
+        当前: <span class="text-slate-300" x-text="currentRecordingDir || '未设置'"></span>
+      </div>
+      <div class="mt-1 text-[11px] text-slate-500" x-text="recordingDirHint"></div>
+    </div>
 
     <!-- 全局 Loading -->
     <div x-show="loading" class="flex flex-col items-center justify-center py-24 gap-4 text-slate-500">
@@ -265,10 +298,63 @@
         transcribing: {},    // { AudioFile: true }
         loading: true,
         isTranscribingAll: false,
+        recordingDirs: [],
+        selectedRecordingDir: "",
+        customRecordingDir: "",
+        currentRecordingDir: "",
+        recordingDirHint: "",
 
         // ── 初始化 ──
         async init() {
+          await this.loadRecordingDirs();
           await this.loadSessions();
+        },
+
+        async loadRecordingDirs() {
+          try {
+            const r = await fetch('/api/recordings/dirs');
+            if (!r.ok) throw new Error(r.statusText);
+            const data = await r.json();
+            this.recordingDirs = data.candidates || [];
+            this.currentRecordingDir = data.current || "";
+            this.selectedRecordingDir = this.currentRecordingDir || this.selectedRecordingDir;
+            this.recordingDirHint = `允许范围: ${data.baseDir || ''}`;
+          } catch (e) {
+            this.recordingDirHint = '加载录音目录失败: ' + e.message;
+          }
+        },
+
+        async applyRecordingDir() {
+          if (!this.selectedRecordingDir) {
+            this.recordingDirHint = '请先选择目录';
+            return;
+          }
+          try {
+            const r = await fetch('/api/recordings/set', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: this.selectedRecordingDir }),
+            });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.error || r.statusText);
+            this.currentRecordingDir = data.current || this.selectedRecordingDir;
+            this.recordingDirs = data.candidates || this.recordingDirs;
+            this.recordingDirHint = '录音目录已切换';
+            this.view = 'sessions';
+            await this.loadSessions();
+          } catch (e) {
+            this.recordingDirHint = '切换失败: ' + e.message;
+          }
+        },
+
+        async applyCustomRecordingDir() {
+          const path = (this.customRecordingDir || '').trim();
+          if (!path) {
+            this.recordingDirHint = '请先输入路径';
+            return;
+          }
+          this.selectedRecordingDir = path;
+          await this.applyRecordingDir();
         },
 
         // ── 加载会话列表 ──
@@ -277,7 +363,9 @@
           try {
             const r = await fetch('/api/sessions');
             if (!r.ok) throw new Error(r.statusText);
-            this.sessions = await r.json();
+            const data = await r.json();
+            this.sessions = data.sessions || [];
+            this.currentRecordingDir = data.recordingsDir || this.currentRecordingDir;
             this.sessions.sort((a, b) => b.startTime.localeCompare(a.startTime));
           } catch (e) {
             console.error('加载会话列表失败', e);

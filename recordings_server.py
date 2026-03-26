@@ -29,15 +29,17 @@ from pathlib import Path
 CONFIG_FILE    = "recordings-web.json"
 RECORDINGS_DIR = Path("Recordings")
 UI_FILE        = Path("recordings-ui") / "index.html"
+BASE_DIR       = Path.cwd().resolve()
 
 _port       = 8765
 _ai_base    = ""
 _ai_key     = ""
 _ai_model   = "whisper-1"
+_recordings_dir = (BASE_DIR / RECORDINGS_DIR).resolve()
 
 
 def load_config():
-    global _port, _ai_base, _ai_key, _ai_model
+    global _port, _ai_base, _ai_key, _ai_model, _recordings_dir
     if not os.path.exists(CONFIG_FILE):
         return
     try:
@@ -47,6 +49,13 @@ def load_config():
         _ai_base  = cfg.get("ai_base_url",  _ai_base)
         _ai_key   = cfg.get("ai_api_key",   _ai_key)
         _ai_model = cfg.get("ai_model",     _ai_model)
+        configured_dir = str(cfg.get("recordings_dir", "")).strip()
+        if configured_dir:
+            resolved = _resolve_recordings_dir(configured_dir)
+            if resolved is not None:
+                _recordings_dir = resolved
+            else:
+                print(f"[recordings] 忽略非法 recordings_dir 配置: {configured_dir}")
         print("[recordings] 已加载 %s，端口: %s" % (CONFIG_FILE, _port))
     except Exception as e:
         print("[recordings] 读取 %s 失败: %s，使用默认配置" % (CONFIG_FILE, e))
@@ -72,6 +81,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
             self._serve_index()
+        elif path == "/api/recordings/dirs":
+            self._api_recordings_dirs()
         elif path == "/api/sessions":
             self._api_sessions()
         elif path.startswith("/api/sessions/"):
@@ -93,6 +104,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/api/transcribe":
             self._api_transcribe()
+        elif path == "/api/recordings/set":
+            self._api_recordings_set()
         else:
             self._respond(404, b"not found")
 
@@ -113,8 +126,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _api_sessions(self):
         sessions = []
-        if RECORDINGS_DIR.exists():
-            dirs = sorted(RECORDINGS_DIR.glob("Session_*"), reverse=True)
+        recordings_dir = _recordings_dir
+        if recordings_dir.exists():
+            dirs = sorted(recordings_dir.glob("Session_*"), reverse=True)
             for d in dirs:
                 idx = d / "index.json"
                 if not idx.exists():
@@ -143,13 +157,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     })
                 except Exception as e:
                     print(f"[recordings] 读取 {d.name} 失败: {e}")
-        self._json(sessions)
+        self._json({
+            "recordingsDir": str(recordings_dir),
+            "sessions": sessions,
+        })
 
     def _api_session_detail(self, session_id):
         if not self._safe_id(session_id):
             self._respond(400, b"invalid id")
             return
-        idx = RECORDINGS_DIR / session_id / "index.json"
+        idx = _recordings_dir / session_id / "index.json"
         if not idx.exists():
             self._respond(404, b"session not found")
             return
@@ -159,7 +176,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not self._safe_id(session_id) or not self._safe_id(filename):
             self._respond(400, b"invalid path")
             return
-        filepath = RECORDINGS_DIR / session_id / filename
+        filepath = _recordings_dir / session_id / filename
         if not filepath.exists():
             self._respond(404, b"file not found")
             return
@@ -212,7 +229,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json({"error": "路径非法"}, 400)
             return
 
-        filepath = RECORDINGS_DIR / session_id / filename
+        filepath = _recordings_dir / session_id / filename
         if not filepath.exists():
             self._json({"error": "音频文件不存在"}, 404)
             return
@@ -251,6 +268,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
             print(f"[recordings] AI 请求失败: {e}")
             self._json({"error": f"AI 服务请求失败: {e}"}, 502)
 
+    def _api_recordings_dirs(self):
+        self._json({
+            "baseDir": str(BASE_DIR),
+            "current": str(_recordings_dir),
+            "candidates": _discover_recordings_dirs(),
+        })
+
+    def _api_recordings_set(self):
+        global _recordings_dir
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length))
+        except Exception:
+            self._json({"error": "无效的 JSON 请求体"}, 400)
+            return
+
+        raw = str(body.get("path", "")).strip()
+        resolved = _resolve_recordings_dir(raw)
+        if resolved is None:
+            self._json({"error": f"目录不在允许范围内或不存在: {raw}"}, 400)
+            return
+
+        _recordings_dir = resolved
+        self._json({
+            "ok": True,
+            "current": str(_recordings_dir),
+            "candidates": _discover_recordings_dirs(),
+        })
+
     # ──────────────────────────────────────────
     # 工具方法
     # ──────────────────────────────────────────
@@ -280,6 +326,53 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 # urllib.parse 需要额外导入
 import urllib.parse
+
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except Exception:
+        return False
+
+
+def _resolve_recordings_dir(raw_path: str):
+    if not raw_path:
+        return None
+    p = Path(raw_path)
+    if not p.is_absolute():
+        p = (BASE_DIR / p).resolve()
+    else:
+        p = p.resolve()
+
+    if not _is_within(p, BASE_DIR):
+        return None
+    if not p.exists() or not p.is_dir():
+        return None
+    return p
+
+
+def _discover_recordings_dirs():
+    candidates = set()
+    preferred = [
+        BASE_DIR / "Recordings",
+        BASE_DIR / "TS3AudioBot" / "bin" / "Debug" / "netcoreapp3.1" / "Recordings",
+    ]
+    for p in preferred:
+        if p.exists() and p.is_dir():
+            candidates.add(str(p.resolve()))
+
+    for p in BASE_DIR.rglob("Recordings"):
+        try:
+            rp = p.resolve()
+        except Exception:
+            continue
+        if p.is_dir() and _is_within(rp, BASE_DIR):
+            candidates.add(str(rp))
+
+    if str(_recordings_dir) not in candidates and _recordings_dir.exists() and _recordings_dir.is_dir():
+        candidates.add(str(_recordings_dir))
+
+    return sorted(candidates)
 
 
 # ──────────────────────────────────────────────
