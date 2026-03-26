@@ -376,6 +376,7 @@
                 class="px-3 py-1.5 text-xs rounded bg-indigo-600 hover:bg-indigo-500 text-white">
           使用该目录
         </button>
+        <button @click="resetSessionFilters()" class="px-3 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 text-white">重置筛选</button>
       </div>
       <div class="mt-2 flex flex-wrap items-center gap-2">
         <input x-model="customRecordingDir"
@@ -390,6 +391,38 @@
         当前: <span class="text-slate-300" x-text="currentRecordingDir || '未设置'"></span>
       </div>
       <div class="mt-1 text-[11px] text-slate-500" x-text="recordingDirHint"></div>
+
+      <div class="mt-3 border-t border-slate-800 pt-3">
+        <div class="text-xs text-slate-400 mb-2">排序与多重筛选</div>
+        <div class="grid md:grid-cols-3 gap-2">
+          <select x-model="sessionSortBy" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200">
+            <option value="time_desc">时间（新→旧）</option>
+            <option value="time_asc">时间（旧→新）</option>
+            <option value="duration_desc">时长（长→短）</option>
+            <option value="duration_asc">时长（短→长）</option>
+            <option value="entries_desc">片段数（多→少）</option>
+            <option value="entries_asc">片段数（少→多）</option>
+          </select>
+          <input x-model="sessionFilterText" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200" placeholder="关键词：ID/备注/游戏/频道/说话人" />
+          <input x-model="sessionFilterSpeaker" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200" placeholder="说话人包含..." />
+          <input x-model="sessionFilterGame" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200" placeholder="游戏包含..." />
+          <input x-model="sessionFilterChannel" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200" placeholder="频道包含..." />
+          <div class="grid grid-cols-2 gap-2">
+            <select x-model="sessionDateFrom" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200">
+              <option value="">起始日期</option>
+              <template x-for="d in sessionDateOptions" :key="'from_'+d">
+                <option :value="d" x-text="d"></option>
+              </template>
+            </select>
+            <select x-model="sessionDateTo" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200">
+              <option value="">结束日期</option>
+              <template x-for="d in sessionDateOptions" :key="'to_'+d">
+                <option :value="d" x-text="d"></option>
+              </template>
+            </select>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 全局 Loading -->
@@ -405,15 +438,15 @@
     <div x-show="view === 'sessions' && !loading" class="fade-in">
 
       <!-- 空状态 -->
-      <div x-show="sessions.length === 0" class="flex flex-col items-center justify-center py-24 text-slate-600 gap-3">
+      <div x-show="filteredSessions.length === 0" class="flex flex-col items-center justify-center py-24 text-slate-600 gap-3">
         <div class="text-5xl">📭</div>
-        <p class="text-sm">暂无录音记录</p>
+        <p class="text-sm">暂无符合筛选条件的录音</p>
         <p class="text-xs">使用 <code class="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">!stt start</code> 开始录音后将在此显示</p>
       </div>
 
       <!-- 会话卡片网格 -->
       <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <template x-for="session in sessions" :key="session.id">
+        <template x-for="session in filteredSessions" :key="session.id">
           <div @click="openSession(session)"
                class="group bg-slate-900 rounded-xl p-4 border border-slate-800 cursor-pointer
                       hover:border-indigo-500/60 hover:bg-slate-800/60 transition-all duration-150">
@@ -426,6 +459,11 @@
               </div>
               <span class="text-xs bg-indigo-950 text-indigo-400 border border-indigo-900 px-2 py-0.5 rounded-full"
                     x-text="session.entryCount + ' 段'"></span>
+            </div>
+
+            <div class="mb-2 flex flex-wrap gap-1 text-[11px]">
+              <span class="px-1.5 py-0.5 rounded border border-slate-700 text-slate-300" x-text="'游戏: ' + (session.meta?.game || '-')"></span>
+              <span class="px-1.5 py-0.5 rounded border border-slate-700 text-slate-300" x-text="'频道: ' + (session.meta?.channel || '-')"></span>
             </div>
 
             <!-- 参与者头像 -->
@@ -448,6 +486,8 @@
               <span>时长约 <span class="text-slate-400" x-text="fmtDuration(session.totalDurationMs)"></span></span>
               <span class="group-hover:text-indigo-400 transition-colors">查看详情 →</span>
             </div>
+
+            <div class="mt-2 text-[11px] text-slate-500 line-clamp-2" x-text="session.meta?.note || ''"></div>
           </div>
         </template>
       </div>
@@ -455,6 +495,23 @@
 
     <!-- ===== 会话详情 ===== -->
     <div x-show="view === 'detail' && !loading" class="fade-in space-y-2">
+      <div class="bg-slate-900 rounded-xl px-4 py-3 border border-slate-800 space-y-2">
+        <div class="text-xs text-slate-400">录音档案元数据（可用于筛选）</div>
+        <div class="grid md:grid-cols-2 gap-2 text-xs">
+          <input x-model="sessionMeta.game" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-slate-200" placeholder="游戏（例：Valorant）" />
+          <div class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-slate-200 flex items-center justify-between gap-2">
+            <span class="truncate">录音频道：<span x-text="sessionMeta.channel || '自动识别中/未知'"></span></span>
+            <button @click="autoDetectChannel(true)" class="text-[11px] px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600">重新识别</button>
+          </div>
+          <input x-model="sessionMeta.prompt" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-slate-200 md:col-span-2" placeholder="AI 转录 Prompt（调用转录时会传入）" />
+          <input x-model="sessionMeta.tagsText" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-slate-200 md:col-span-2" placeholder="标签（逗号分隔）" />
+          <textarea x-model="sessionMeta.note" rows="2" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-slate-200 md:col-span-2" placeholder="备注（例如：这局是排位赛，战术A测试）"></textarea>
+        </div>
+        <div class="flex items-center gap-2">
+          <button @click="saveSessionMeta()" class="px-3 py-1.5 text-xs rounded bg-indigo-600 hover:bg-indigo-500 text-white">保存档案</button>
+          <span class="text-[11px] text-slate-500" x-text="'当前 Prompt: ' + (sessionMeta.prompt || '(空)')"></span>
+        </div>
+      </div>
 
       <!-- 统计栏 -->
       <div class="bg-slate-900 rounded-xl px-4 py-3 border border-slate-800 flex flex-wrap gap-4 text-xs text-slate-500 mb-4">
@@ -463,29 +520,39 @@
           <span class="text-slate-300" x-text="uniqueSpeakers.join('、')"></span>
         </span>
         <span>总时长约 <span class="text-slate-300 font-medium" x-text="fmtDuration(totalDuration)"></span></span>
+        <span class="flex items-center gap-2">
+          <span>我的昵称</span>
+          <select x-model="selfSpeakerName" @change="persistSelfSpeaker()" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200">
+            <option value="">自动/未设置</option>
+            <template x-for="sp in uniqueSpeakers" :key="'self_'+sp">
+              <option :value="sp" x-text="sp"></option>
+            </template>
+          </select>
+        </span>
       </div>
 
       <!-- 对话气泡列表 -->
       <template x-for="(entry, idx) in entries" :key="entry.AudioFile">
-        <div class="flex gap-3 fade-in">
+        <div class="flex gap-3 fade-in" :class="isSelfSpeaker(entry.ClientName) ? 'justify-end' : 'justify-start'">
 
           <!-- 头像 -->
           <div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white mt-0.5"
-               :class="speakerBg(entry.ClientName)"
+               :class="(isSelfSpeaker(entry.ClientName) ? 'order-2 ' : 'order-1 ') + speakerBg(entry.ClientName)"
                x-text="entry.ClientName.charAt(0).toUpperCase()"></div>
 
           <!-- 气泡内容 -->
-          <div class="flex-1 min-w-0">
+          <div class="min-w-0 max-w-[80%]" :class="isSelfSpeaker(entry.ClientName) ? 'order-1 text-right' : 'order-2 text-left'">
 
             <!-- 元信息 -->
-            <div class="flex items-baseline gap-2 mb-1">
+            <div class="flex items-baseline gap-2 mb-1" :class="isSelfSpeaker(entry.ClientName) ? 'justify-end' : 'justify-start'">
               <span class="text-sm font-medium" :class="speakerText(entry.ClientName)" x-text="entry.ClientName"></span>
-              <span class="text-xs text-slate-600" x-text="fmtOffset(entry.StartOffsetMs)"></span>
+              <span class="text-xs text-slate-600" x-text="fmtEntryRealTime(entry)"></span>
               <span class="text-xs text-slate-700" x-text="'(' + fmtDuration(entry.DurationMs) + ')'"></span>
             </div>
 
             <!-- 气泡 -->
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-md px-3 py-2.5">
+            <div class="bg-slate-900 border border-slate-800 px-3 py-2.5"
+                 :class="isSelfSpeaker(entry.ClientName) ? 'rounded-2xl rounded-tr-md' : 'rounded-2xl rounded-tl-md'">
 
               <!-- 音频播放器 -->
               <audio controls preload="none" :src="audioUrl(entry)" class="mb-2"></audio>
@@ -596,6 +663,15 @@
         pollTimer: null,
         sessions: [],
         currentSession: null,
+        sessionMeta: { game: '', channel: '', note: '', prompt: '', tagsText: '' },
+        selfSpeakerName: '',
+        sessionSortBy: 'time_desc',
+        sessionFilterText: '',
+        sessionFilterSpeaker: '',
+        sessionFilterGame: '',
+        sessionFilterChannel: '',
+        sessionDateFrom: '',
+        sessionDateTo: '',
         entries: [],
         transcriptions: {},
         transcribing: {},
@@ -610,6 +686,7 @@
         async init() {
           this.authUser = localStorage.getItem('ts3ab_auth_user') || '';
           this.authToken = localStorage.getItem('ts3ab_auth_token') || '';
+          this.selfSpeakerName = localStorage.getItem('recordings_self_speaker') || '';
           await this.checkTs3abStatus();
           await this.refreshOverview();
           await this.loadVersionCatalog(false);
@@ -658,6 +735,114 @@
             return false;
           }
           return true;
+        },
+        hydrateSessionMeta(meta) {
+          const m = meta || {};
+          this.sessionMeta = {
+            game: String(m.game || ''),
+            channel: String(m.channel || ''),
+            note: String(m.note || ''),
+            prompt: String(m.prompt || ''),
+            tagsText: Array.isArray(m.tags) ? m.tags.join(', ') : '',
+          };
+        },
+        sessionMetaPayload() {
+          const tags = String(this.sessionMeta.tagsText || '')
+            .split(',')
+            .map(x => x.trim())
+            .filter(Boolean);
+          return {
+            game: String(this.sessionMeta.game || '').trim(),
+            channel: String(this.sessionMeta.channel || '').trim(),
+            note: String(this.sessionMeta.note || '').trim(),
+            prompt: String(this.sessionMeta.prompt || '').trim(),
+            tags,
+          };
+        },
+        persistSelfSpeaker() {
+          localStorage.setItem('recordings_self_speaker', this.selfSpeakerName || '');
+        },
+        isSelfSpeaker(name) {
+          return !!(this.selfSpeakerName && String(name || '') === String(this.selfSpeakerName));
+        },
+        _walkObject(obj, visitor, seen) {
+          if (!obj || typeof obj !== 'object') return;
+          const bag = seen || new Set();
+          if (bag.has(obj)) return;
+          bag.add(obj);
+          visitor(obj);
+          if (Array.isArray(obj)) {
+            for (const x of obj) this._walkObject(x, visitor, bag);
+          } else {
+            for (const k of Object.keys(obj)) this._walkObject(obj[k], visitor, bag);
+          }
+        },
+        detectChannelFromBotInfo(info) {
+          let found = '';
+          this._walkObject(info, (node) => {
+            if (found || !node || typeof node !== 'object' || Array.isArray(node)) return;
+            const keys = Object.keys(node);
+            const lower = keys.map(k => k.toLowerCase());
+            const idxName = lower.indexOf('channelname');
+            if (idxName >= 0 && node[keys[idxName]]) {
+              found = String(node[keys[idxName]]);
+              return;
+            }
+            const idxChan = lower.indexOf('channel');
+            if (idxChan >= 0 && typeof node[keys[idxChan]] === 'string' && node[keys[idxChan]]) {
+              found = String(node[keys[idxChan]]);
+            }
+          });
+          return found;
+        },
+        detectChannelFromServerTree(tree) {
+          let found = '';
+          this._walkObject(tree, (node) => {
+            if (found || !node || typeof node !== 'object' || Array.isArray(node)) return;
+            const keys = Object.keys(node);
+            const map = {};
+            for (const k of keys) map[k.toLowerCase()] = k;
+            const nameKey = map['name'] || map['channelname'];
+            const currentKey = map['current'] || map['iscurrent'] || map['self'] || map['isownchannel'];
+            if (nameKey && currentKey && node[currentKey] === true && node[nameKey]) {
+              found = String(node[nameKey]);
+            }
+          });
+          return found;
+        },
+        async autoDetectChannel(force) {
+          if (!this.currentSession) return;
+          if (!force && this.sessionMeta.channel) return;
+          try {
+            let botId = this.selectedBotId;
+            if (botId === null) {
+              if (!this.bots || !this.bots.length) await this.refreshBots();
+              const online = (this.bots || []).find(b => b && b.Id !== null && b.Id !== undefined);
+              if (online) botId = Number(online.Id);
+            }
+            if (botId === null || Number.isNaN(Number(botId))) return;
+            const info = await this.ts3abBotCall(botId, ['bot', 'info']).catch(() => null);
+            let channel = this.detectChannelFromBotInfo(info);
+            if (!channel) {
+              const tree = await this.ts3abBotCall(botId, ['server', 'tree']).catch(() => null);
+              channel = this.detectChannelFromServerTree(tree);
+            }
+            if (channel) {
+              this.sessionMeta.channel = channel;
+              await this.saveSessionMeta();
+            }
+          } catch (e) {
+            console.warn('自动识别频道失败', e);
+          }
+        },
+        resetSessionFilters() {
+          this.sessionSortBy = 'time_desc';
+          this.sessionFilterText = '';
+          this.sessionFilterSpeaker = '';
+          this.sessionFilterGame = '';
+          this.sessionFilterChannel = '';
+          this.sessionDateFrom = '';
+          this.sessionDateTo = '';
         },
         async parseResp(r) {
           const t = await r.text();
@@ -1188,7 +1373,6 @@
             const data = await r.json();
             this.sessions = data.sessions || [];
             this.currentRecordingDir = data.recordingsDir || this.currentRecordingDir;
-            this.sessions.sort((a, b) => b.startTime.localeCompare(a.startTime));
           } catch (e) {
             console.error('加载会话列表失败', e);
           }
@@ -1198,6 +1382,7 @@
         async openSession(session) {
           this.loading = true;
           this.currentSession = session;
+          this.hydrateSessionMeta(session.meta || {});
           this.entries = [];
           this.transcriptions = {};
           this.transcribing = {};
@@ -1206,11 +1391,48 @@
             if (!r.ok) throw new Error(r.statusText);
             const data = await r.json();
             this.entries = data.sort((a, b) => a.StartOffsetMs - b.StartOffsetMs);
+            if (!this.selfSpeakerName && this.uniqueSpeakers.length === 1) {
+              this.selfSpeakerName = this.uniqueSpeakers[0];
+              this.persistSelfSpeaker();
+            }
+            await this.loadSessionMeta();
+            await this.autoDetectChannel(false);
           } catch (e) {
             console.error('加载会话详情失败', e);
           }
           this.view = 'detail';
           this.loading = false;
+        },
+
+        async loadSessionMeta() {
+          if (!this.currentSession) return;
+          try {
+            const r = await fetch(`/api/sessions/${encodeURIComponent(this.currentSession.id)}/meta`);
+            if (!r.ok) throw new Error(r.statusText);
+            const data = await r.json();
+            this.hydrateSessionMeta(data.meta || {});
+          } catch (e) {
+            console.error('加载会话元数据失败', e);
+          }
+        },
+
+        async saveSessionMeta() {
+          if (!this.currentSession) return;
+          try {
+            const r = await fetch(`/api/sessions/${encodeURIComponent(this.currentSession.id)}/meta`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ meta: this.sessionMetaPayload() }),
+            });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.error || r.statusText);
+            this.hydrateSessionMeta(data.meta || {});
+            const i = this.sessions.findIndex(s => s.id === this.currentSession.id);
+            if (i >= 0) this.sessions[i].meta = data.meta || {};
+            this.toastOk('档案已保存');
+          } catch (e) {
+            this.toastErr('保存档案失败: ' + e.message);
+          }
         },
 
         backToList() {
@@ -1228,7 +1450,8 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 sessionId: this.currentSession.id,
-                filename: entry.AudioFile
+                filename: entry.AudioFile,
+                prompt: String(this.sessionMeta.prompt || '').trim(),
               })
             });
             const data = await r.json();
@@ -1265,12 +1488,76 @@
         get transcribedCount() {
           return Object.keys(this.transcriptions).length;
         },
+        get filteredSessions() {
+          const text = this.sessionFilterText.trim().toLowerCase();
+          const speaker = this.sessionFilterSpeaker.trim().toLowerCase();
+          const game = this.sessionFilterGame.trim().toLowerCase();
+          const channel = this.sessionFilterChannel.trim().toLowerCase();
+          const from = this.sessionDateFrom ? new Date(this.sessionDateFrom + 'T00:00:00') : null;
+          const to = this.sessionDateTo ? new Date(this.sessionDateTo + 'T23:59:59') : null;
+          let arr = (this.sessions || []).filter(s => {
+            const m = s.meta || {};
+            const blob = [
+              s.id || '',
+              s.startTime || '',
+              (s.speakers || []).join(' '),
+              m.game || '',
+              m.channel || '',
+              m.note || '',
+            ].join(' ').toLowerCase();
+            if (text && !blob.includes(text)) return false;
+            if (speaker) {
+              const sp = (s.speakers || []).join(' ').toLowerCase();
+              if (!sp.includes(speaker)) return false;
+            }
+            if (game && !String(m.game || '').toLowerCase().includes(game)) return false;
+            if (channel && !String(m.channel || '').toLowerCase().includes(channel)) return false;
+            if (from || to) {
+              const dt = this.parseSessionDate(s.startTime);
+              if (from && dt < from) return false;
+              if (to && dt > to) return false;
+            }
+            return true;
+          });
+          const by = this.sessionSortBy;
+          arr.sort((a, b) => {
+            if (by === 'time_asc') return String(a.startTime || '').localeCompare(String(b.startTime || ''));
+            if (by === 'duration_desc') return (Number(b.totalDurationMs || 0) - Number(a.totalDurationMs || 0));
+            if (by === 'duration_asc') return (Number(a.totalDurationMs || 0) - Number(b.totalDurationMs || 0));
+            if (by === 'entries_desc') return (Number(b.entryCount || 0) - Number(a.entryCount || 0));
+            if (by === 'entries_asc') return (Number(a.entryCount || 0) - Number(b.entryCount || 0));
+            return String(b.startTime || '').localeCompare(String(a.startTime || ''));
+          });
+          return arr;
+        },
+        get sessionDateOptions() {
+          const set = new Set();
+          for (const s of (this.sessions || [])) {
+            const st = String(s.startTime || '');
+            const m = st.match(/^(\d{4})(\d{2})(\d{2})_/);
+            if (m) set.add(`${m[1]}-${m[2]}-${m[3]}`);
+          }
+          return [...set].sort((a, b) => b.localeCompare(a));
+        },
 
         formatSessionTime(str) {
           if (!str) return '';
           const m = str.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/);
           if (!m) return str;
           return `${m[1]}-${m[2]}-${m[3]}  ${m[4]}:${m[5]}:${m[6]}`;
+        },
+        parseSessionDate(str) {
+          const m = String(str || '').match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/);
+          if (!m) return new Date(0);
+          return new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`);
+        },
+        fmtEntryRealTime(entry) {
+          if (entry && entry.StartTime) return String(entry.StartTime);
+          const base = this.currentSession ? this.parseSessionDate(this.currentSession.startTime) : new Date(0);
+          const ms = Number(entry && entry.StartOffsetMs ? entry.StartOffsetMs : 0);
+          const d = new Date(base.getTime() + ms);
+          if (Number.isNaN(d.getTime())) return this.fmtOffset(ms);
+          return d.toLocaleString();
         },
 
         fmtOffset(ms) {

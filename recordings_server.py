@@ -101,6 +101,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._api_recordings_dirs()
         elif path == "/api/sessions":
             self._api_sessions()
+        elif path.startswith("/api/sessions/") and path.endswith("/meta"):
+            session_id = urllib.parse.unquote(path[len("/api/sessions/"):-len("/meta")].strip("/"))
+            self._api_session_meta_get(session_id)
         elif path.startswith("/api/sessions/"):
             session_id = urllib.parse.unquote(path[len("/api/sessions/"):])
             self._api_session_detail(session_id)
@@ -126,6 +129,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._api_ts3ab_bot_call()
         elif path == "/api/recordings/set":
             self._api_recordings_set()
+        elif path.startswith("/api/sessions/") and path.endswith("/meta"):
+            session_id = urllib.parse.unquote(path[len("/api/sessions/"):-len("/meta")].strip("/"))
+            self._api_session_meta_set(session_id)
         else:
             self._respond(404, b"not found")
 
@@ -174,6 +180,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         "entryCount":     len(entries),
                         "totalDurationMs": max_end,
                         "speakers":       speakers,
+                        "meta": _read_session_meta(_recordings_dir, d.name),
                     })
                 except Exception as e:
                     print(f"[recordings] 读取 {d.name} 失败: {e}")
@@ -191,6 +198,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._respond(404, b"session not found")
             return
         self._respond(200, idx.read_bytes(), content_type="application/json")
+
+    def _api_session_meta_get(self, session_id):
+        if not self._safe_id(session_id):
+            self._json({"error": "invalid id"}, 400)
+            return
+        session_dir = _recordings_dir / session_id
+        if not session_dir.exists():
+            self._json({"error": "session not found"}, 404)
+            return
+        self._json({
+            "sessionId": session_id,
+            "meta": _read_session_meta(_recordings_dir, session_id),
+        })
+
+    def _api_session_meta_set(self, session_id):
+        if not self._safe_id(session_id):
+            self._json({"error": "invalid id"}, 400)
+            return
+        session_dir = _recordings_dir / session_id
+        if not session_dir.exists():
+            self._json({"error": "session not found"}, 404)
+            return
+        body, err = self._read_json_body()
+        if err:
+            self._json({"error": err}, 400)
+            return
+        meta = _normalize_session_meta(body.get("meta", body))
+        _write_session_meta(_recordings_dir, session_id, meta)
+        self._json({"ok": True, "sessionId": session_id, "meta": meta})
 
     def _api_audio(self, session_id, filename):
         if not self._safe_id(session_id) or not self._safe_id(filename):
@@ -254,6 +290,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         session_id = body.get("sessionId", "")
         filename   = body.get("filename",  "")
+        prompt     = str(body.get("prompt", "")).strip()
 
         if not session_id or not filename:
             self._json({"error": "需要 sessionId 和 filename"}, 400)
@@ -271,14 +308,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         boundary    = uuid.uuid4().hex
 
         # 手动拼接 multipart/form-data
+        prompt_part = b""
+        if prompt:
+            prompt_part = (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="prompt"\r\n\r\n'
+                f"{prompt}\r\n"
+            ).encode("utf-8")
+
         body_parts = (
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="model"\r\n\r\n'
             f"{_ai_model}\r\n"
+        ).encode("utf-8") + prompt_part + (
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
             f"Content-Type: audio/wav\r\n\r\n"
-        ).encode() + audio_bytes + f"\r\n--{boundary}--\r\n".encode()
+        ).encode("utf-8") + audio_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
 
         req = urllib.request.Request(
             f"{_ai_base.rstrip('/')}/audio/transcriptions",
@@ -564,6 +610,48 @@ def _fetch_versions_csv(url: str):
         "source": url,
         "error": None,
     }
+
+
+def _session_meta_path(recordings_dir: Path, session_id: str) -> Path:
+    return recordings_dir / session_id / "session_meta.json"
+
+
+def _normalize_session_meta(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    out = {
+        "game": str(raw.get("game", "")).strip(),
+        "channel": str(raw.get("channel", "")).strip(),
+        "note": str(raw.get("note", "")).strip(),
+        "prompt": str(raw.get("prompt", "")).strip(),
+    }
+    tags = raw.get("tags", [])
+    if isinstance(tags, list):
+        clean = []
+        for t in tags:
+            s = str(t).strip()
+            if s:
+                clean.append(s)
+        out["tags"] = clean
+    else:
+        out["tags"] = []
+    return out
+
+
+def _read_session_meta(recordings_dir: Path, session_id: str):
+    path = _session_meta_path(recordings_dir, session_id)
+    if not path.exists():
+        return _normalize_session_meta({})
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return _normalize_session_meta(data)
+    except Exception:
+        return _normalize_session_meta({})
+
+
+def _write_session_meta(recordings_dir: Path, session_id: str, meta):
+    path = _session_meta_path(recordings_dir, session_id)
+    norm = _normalize_session_meta(meta)
+    path.write_text(json.dumps(norm, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # ──────────────────────────────────────────────
