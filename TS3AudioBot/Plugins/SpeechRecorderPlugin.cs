@@ -48,6 +48,7 @@ namespace TS3AudioBot.Plugins
             public DateTime LastSpeakTime { get; set; }
             public string FileName { get; set; }
             public string ClientName { get; set; }
+            public volatile bool IsClosed { get; set; }
         }
 
         public class JsonRecordEntry
@@ -57,6 +58,7 @@ namespace TS3AudioBot.Plugins
             public string StartTime { get; set; }
             public string EndTime { get; set; }
             public double DurationMs { get; set; }
+            public double StartOffsetMs { get; set; }
             public string AudioFile { get; set; }
         }
 
@@ -68,6 +70,7 @@ namespace TS3AudioBot.Plugins
         private string _currentSessionFolder;
         private MyVoiceReceiver _voiceReceiver;
         private DateTime _lastGlobalVoiceTime;
+        private DateTime _sessionStartTime;
         private readonly object _jsonLock = new object();
 
         public void Initialize()
@@ -112,7 +115,8 @@ namespace TS3AudioBot.Plugins
 
                 _sessionRecords.Clear();
                 _isRecordingEnabled = true;
-                _lastGlobalVoiceTime = DateTime.Now;
+                _sessionStartTime = DateTime.Now;
+                _lastGlobalVoiceTime = _sessionStartTime;
 
                 string fmt = EXPORT_AS_WAV ? "WAV" : "PCM";
                 return $"🔴 已开始多角色语音录制！({fmt} 双声道模式)\n保存路径: {_currentSessionFolder}\n⚠️ 若超过 10 分钟无人说话将自动停止。";
@@ -168,7 +172,7 @@ namespace TS3AudioBot.Plugins
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Log.Debug(ex, "[STT] 通过 Book 查询客户端 {0} 昵称失败", clientId); }
 
             try
             {
@@ -194,7 +198,7 @@ namespace TS3AudioBot.Plugins
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Log.Debug(ex, "[STT] 通过 clientbuffer 查询客户端 {0} 昵称失败", clientId); }
 
             return $"UnknownUser_{clientId}";
         }
@@ -208,11 +212,11 @@ namespace TS3AudioBot.Plugins
 
             var userState = _activeRecords.GetOrAdd(clientId, id =>
             {
-                string startTimeStr = now.ToString("yyyy-MM-dd_HH-mm-ss.fff");
                 string clientName = GetClientName(id);
-                
+                long startOffsetMs = (long)(now - _sessionStartTime).TotalMilliseconds;
+                string safeClientName = string.Concat(clientName.Split(Path.GetInvalidFileNameChars()));
                 string extension = EXPORT_AS_WAV ? ".wav" : ".pcm";
-                string fileName = $"{startTimeStr}_{id}{extension}";
+                string fileName = $"{startOffsetMs:D8}ms_{safeClientName}{extension}";
                 string filePath = Path.Combine(_currentSessionFolder, fileName);
 
                 var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read);
@@ -234,6 +238,7 @@ namespace TS3AudioBot.Plugins
 
             lock (userState.AudioStream)
             {
+                if (userState.IsClosed) return;
                 userState.AudioStream.Write(audioData, 0, audioData.Length);
                 userState.LastSpeakTime = now;
             }
@@ -264,6 +269,9 @@ namespace TS3AudioBot.Plugins
         {
             lock (state.AudioStream)
             {
+                if (state.IsClosed) return;
+                state.IsClosed = true;
+
                 if (EXPORT_AS_WAV)
                 {
                     int dataLength = (int)state.AudioStream.Length - 44;
@@ -275,6 +283,8 @@ namespace TS3AudioBot.Plugins
                 state.AudioStream.Dispose();
             }
 
+            double startOffsetMs = (state.StartTime - _sessionStartTime).TotalMilliseconds;
+
             var entry = new JsonRecordEntry
             {
                 ClientId = clientId,
@@ -282,6 +292,7 @@ namespace TS3AudioBot.Plugins
                 StartTime = state.StartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
                 EndTime = state.LastSpeakTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
                 DurationMs = Math.Round((state.LastSpeakTime - state.StartTime).TotalMilliseconds, 2),
+                StartOffsetMs = Math.Round(startOffsetMs, 2),
                 AudioFile = state.FileName
             };
 
@@ -320,7 +331,7 @@ namespace TS3AudioBot.Plugins
                                 _ = Ts3Client.SendChannelMessage($"⏹ 超过 {AUTO_STOP_TIMEOUT_MS / 60000} 分钟无语音活动，已自动停止录音并封包。");
                             }
                         } 
-                        catch { }
+                        catch (Exception ex) { Log.Warn(ex, "[STT] 发送自动停止频道通知消息失败"); }
 
                         CommandStt("stop");
                         continue; 
@@ -400,7 +411,7 @@ namespace TS3AudioBot.Plugins
                 }
                 catch (Exception ex)
                 {
-                    // 默默丢掉这个坏掉的包，不造成任何影响
+                    Log.Debug(ex, "[STT] 已丢弃来自客户端 {0} 的异常音频包", clientId);
                 }
             }
 
