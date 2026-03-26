@@ -48,7 +48,7 @@ namespace TS3AudioBot.Plugins
             public DateTime LastSpeakTime { get; set; }
             public string FileName { get; set; }
             public string ClientName { get; set; }
-            public volatile bool IsClosed { get; set; }
+            public bool IsClosed { get; set; }
         }
 
         public class JsonRecordEntry

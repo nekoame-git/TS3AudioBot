@@ -257,3 +257,4 @@ $RECYCLE.BIN/
 recordings-web.json
 # 录音数据目录（体积较大，建议本地保留）
 Recordings/
+ffmpeg.exe
