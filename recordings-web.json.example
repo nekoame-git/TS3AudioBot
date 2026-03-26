@@ -1,0 +1,6 @@
+{
+  "port": 8765,
+  "ai_base_url": "https://api.openai.com/v1",
+  "ai_api_key": "sk-YOUR_API_KEY_HERE",
+  "ai_model": "whisper-1"
+}

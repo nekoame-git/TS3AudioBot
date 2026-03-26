@@ -120,6 +120,84 @@ Download the git repository with `git clone --recurse-submodules https://github.
 1. You can alternatively use `npm run start` for development.  
   This will use the webpack dev server with live reload instead of the ts3ab server.
 
+## SpeechRecorderPlugin 录音回放 Web 界面
+
+本仓库包含一个 `SpeechRecorderPlugin`，可将频道内各成员的语音分段录制为独立的 WAV 文件，并生成带时间轴信息的 `index.json`。  
+配套的录音回放 Web 界面可在浏览器中按时间轴回放每段语音并调用 AI 进行转录。
+
+### 文件结构
+
+```
+TS3AudioBot/            ← Bot 工作目录（与 TS3AudioBot.dll 同级）
+├── recordings_server.py        ← 独立 Python Web 服务器（零依赖）
+├── recordings-web.json         ← 服务器配置（端口、AI 密钥，从 .example 复制）
+├── recordings-web.json.example ← 配置模板
+├── recordings-ui/
+│   └── index.html              ← 前端页面（Alpine.js + Tailwind CDN）
+├── Recordings/                 ← 插件自动生成的录音目录
+│   └── Session_20240101_120000/
+│       ├── index.json
+│       └── 00000000ms_Alice.wav
+├── start.ps1   ← Windows 一键启动脚本
+└── start.sh    ← Linux/macOS 一键启动脚本
+```
+
+### 快速开始
+
+**1. 配置**
+
+```bash
+cp recordings-web.json.example recordings-web.json
+# 编辑 recordings-web.json，填写端口和 AI API 信息（AI 为可选）
+```
+
+**2. 启动（Windows PowerShell）**
+
+```powershell
+.\start.ps1
+```
+
+**3. 启动（Linux / macOS）**
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+启动脚本会同时启动 Python Web 服务器（后台）和 TS3AudioBot；Bot 退出时自动停止 Web 服务器。
+
+**4. 访问**
+
+打开浏览器访问 `http://服务器IP:8765`（端口可在 `recordings-web.json` 中修改）。
+
+### 手动启动（仅 Web 服务器）
+
+```bash
+python3 recordings_server.py
+# 或 Windows:
+python recordings_server.py
+```
+
+### recordings-web.json 配置说明
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `port` | `8765` | Web 服务器监听端口 |
+| `ai_base_url` | `""` | OpenAI 兼容接口地址（如 `https://api.openai.com/v1`），为空则禁用转录功能 |
+| `ai_api_key` | `""` | API Key |
+| `ai_model` | `"whisper-1"` | 语音转录模型名称 |
+
+> **安全提示**：`recordings-web.json` 包含 API Key，请勿提交到公开仓库（已在 `.gitignore` 中排除）。
+
+### 插件命令
+
+| 命令 | 说明 |
+|------|------|
+| `!stt start` | 开始录音 |
+| `!stt stop` | 停止录音并保存 |
+
+---
+
 ## Community
 
 ### Localization

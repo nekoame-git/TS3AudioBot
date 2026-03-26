@@ -8,13 +8,13 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Buffers.Binary;
+using Newtonsoft.Json;
 using TS3AudioBot;
 using TS3AudioBot.Plugins;
 using TS3AudioBot.CommandSystem;
 using TSLib;
 using TSLib.Audio;
 using TSLib.Full;
-using Newtonsoft.Json;
 
 namespace TS3AudioBot.Plugins
 {

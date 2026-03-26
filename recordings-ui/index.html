@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TS3 录音回放</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { darkMode: 'class' }</script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+
+    .fade-in { animation: fadeIn .18s ease-out; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    audio {
+      width: 100%;
+      height: 32px;
+      border-radius: 6px;
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+  </style>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen" x-data="app()" x-init="init()" x-cloak>
+
+  <!-- ============================
+       顶部导航栏
+  ============================= -->
+  <header class="sticky top-0 z-20 bg-slate-900/80 backdrop-blur border-b border-slate-800 px-5 py-3 flex items-center gap-3">
+
+    <!-- 返回按钮 -->
+    <button
+      x-show="view === 'detail'"
+      @click="backToList()"
+      class="text-slate-400 hover:text-white transition-colors text-sm flex items-center gap-1.5 mr-1">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+      </svg>
+      返回
+    </button>
+
+    <!-- 标题 -->
+    <div class="flex-1 min-w-0">
+      <h1 class="text-base font-semibold text-white truncate">
+        <span x-show="view === 'sessions'">🎙 TS3 录音回放</span>
+        <span x-show="view === 'detail'" x-text="currentSession ? formatSessionTime(currentSession.startTime) : ''"></span>
+      </h1>
+      <p x-show="view === 'detail'" class="text-xs text-slate-500 mt-0.5"
+         x-text="currentSession ? currentSession.id : ''"></p>
+    </div>
+
+    <!-- 右侧操作 -->
+    <div x-show="view === 'sessions'" class="flex items-center gap-2">
+      <button @click="loadSessions()" title="刷新"
+        class="p-1.5 text-slate-400 hover:text-white transition-colors rounded-lg hover:bg-slate-800">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+      </button>
+    </div>
+
+    <div x-show="view === 'detail'" class="flex items-center gap-2">
+      <span class="text-xs text-slate-500" x-text="transcribedCount + '/' + entries.length + ' 已转录'"></span>
+      <button
+        @click="transcribeAll()"
+        :disabled="isTranscribingAll"
+        class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all"
+        :class="isTranscribingAll
+          ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+          : 'bg-indigo-600 hover:bg-indigo-500 text-white'">
+        <span x-show="!isTranscribingAll">⚡ 全部转录</span>
+        <span x-show="isTranscribingAll" class="flex items-center gap-1.5">
+          <svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+          转录中…
+        </span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ============================
+       主内容区
+  ============================= -->
+  <main class="max-w-4xl mx-auto px-4 py-5">
+
+    <!-- 全局 Loading -->
+    <div x-show="loading" class="flex flex-col items-center justify-center py-24 gap-4 text-slate-500">
+      <svg class="animate-spin h-8 w-8 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+      </svg>
+      <span class="text-sm">加载中…</span>
+    </div>
+
+    <!-- ===== 会话列表 ===== -->
+    <div x-show="view === 'sessions' && !loading" class="fade-in">
+
+      <!-- 空状态 -->
+      <div x-show="sessions.length === 0" class="flex flex-col items-center justify-center py-24 text-slate-600 gap-3">
+        <div class="text-5xl">📭</div>
+        <p class="text-sm">暂无录音记录</p>
+        <p class="text-xs">使用 <code class="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">!stt start</code> 开始录音后将在此显示</p>
+      </div>
+
+      <!-- 会话卡片网格 -->
+      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <template x-for="session in sessions" :key="session.id">
+          <div @click="openSession(session)"
+               class="group bg-slate-900 rounded-xl p-4 border border-slate-800 cursor-pointer
+                      hover:border-indigo-500/60 hover:bg-slate-800/60 transition-all duration-150">
+
+            <!-- 时间 + 标签 -->
+            <div class="flex items-start justify-between mb-3">
+              <div>
+                <p class="text-xs text-slate-500 mb-0.5">录音时间</p>
+                <p class="text-sm font-medium text-white" x-text="formatSessionTime(session.startTime)"></p>
+              </div>
+              <span class="text-xs bg-indigo-950 text-indigo-400 border border-indigo-900 px-2 py-0.5 rounded-full"
+                    x-text="session.entryCount + ' 段'"></span>
+            </div>
+
+            <!-- 参与者头像 -->
+            <div class="flex items-center gap-1.5 flex-wrap mb-3">
+              <template x-for="speaker in session.speakers.slice(0, 5)" :key="speaker">
+                <div class="flex items-center gap-1">
+                  <div class="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white"
+                       :class="speakerBg(speaker)"
+                       x-text="speaker.charAt(0).toUpperCase()"></div>
+                  <span class="text-xs text-slate-400" x-text="speaker"></span>
+                </div>
+              </template>
+              <span x-show="session.speakers.length > 5"
+                    class="text-xs text-slate-600"
+                    x-text="'+' + (session.speakers.length - 5)"></span>
+            </div>
+
+            <!-- 时长 -->
+            <div class="flex items-center justify-between text-xs text-slate-600">
+              <span>时长约 <span class="text-slate-400" x-text="fmtDuration(session.totalDurationMs)"></span></span>
+              <span class="group-hover:text-indigo-400 transition-colors">查看详情 →</span>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- ===== 会话详情 ===== -->
+    <div x-show="view === 'detail' && !loading" class="fade-in space-y-2">
+
+      <!-- 统计栏 -->
+      <div class="bg-slate-900 rounded-xl px-4 py-3 border border-slate-800 flex flex-wrap gap-4 text-xs text-slate-500 mb-4">
+        <span>共 <span class="text-slate-300 font-medium" x-text="entries.length"></span> 段语音</span>
+        <span>参与者 <span class="text-slate-300 font-medium" x-text="uniqueSpeakers.length"></span> 人：
+          <span class="text-slate-300" x-text="uniqueSpeakers.join('、')"></span>
+        </span>
+        <span>总时长约 <span class="text-slate-300 font-medium" x-text="fmtDuration(totalDuration)"></span></span>
+      </div>
+
+      <!-- 对话气泡列表 -->
+      <template x-for="(entry, idx) in entries" :key="entry.AudioFile">
+        <div class="flex gap-3 fade-in">
+
+          <!-- 头像 -->
+          <div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white mt-0.5"
+               :class="speakerBg(entry.ClientName)"
+               x-text="entry.ClientName.charAt(0).toUpperCase()"></div>
+
+          <!-- 气泡内容 -->
+          <div class="flex-1 min-w-0">
+
+            <!-- 元信息 -->
+            <div class="flex items-baseline gap-2 mb-1">
+              <span class="text-sm font-medium" :class="speakerText(entry.ClientName)" x-text="entry.ClientName"></span>
+              <span class="text-xs text-slate-600" x-text="fmtOffset(entry.StartOffsetMs)"></span>
+              <span class="text-xs text-slate-700" x-text="'(' + fmtDuration(entry.DurationMs) + ')'"></span>
+            </div>
+
+            <!-- 气泡 -->
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-md px-3 py-2.5">
+
+              <!-- 音频播放器 -->
+              <audio controls preload="none" :src="audioUrl(entry)" class="mb-2"></audio>
+
+              <!-- 转录区域 -->
+              <div>
+                <!-- 未转录 -->
+                <div x-show="!transcriptions[entry.AudioFile] && !transcribing[entry.AudioFile]"
+                     class="flex items-center gap-2">
+                  <span class="text-xs text-slate-600 italic">未转录</span>
+                  <button @click="transcribeEntry(entry)"
+                          class="text-xs text-indigo-500 hover:text-indigo-400 transition-colors font-medium">
+                    转录
+                  </button>
+                </div>
+
+                <!-- 转录中 -->
+                <div x-show="transcribing[entry.AudioFile]"
+                     class="flex items-center gap-2 text-xs text-slate-500">
+                  <svg class="animate-spin h-3 w-3 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+                  </svg>
+                  <span>转录中…</span>
+                </div>
+
+                <!-- 转录结果 -->
+                <p x-show="transcriptions[entry.AudioFile]"
+                   class="text-sm text-slate-200 leading-relaxed whitespace-pre-wrap"
+                   x-text="transcriptions[entry.AudioFile]"></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- 底部占位 -->
+      <div class="h-8"></div>
+    </div>
+
+  </main>
+
+  <!-- ============================
+       Alpine.js 应用逻辑
+  ============================= -->
+  <script>
+    // ─── 颜色方案（按说话人哈希分配）───
+    const SPEAKER_COLORS = [
+      { bg: 'bg-indigo-600',  text: 'text-indigo-400'  },
+      { bg: 'bg-purple-600',  text: 'text-purple-400'  },
+      { bg: 'bg-cyan-700',    text: 'text-cyan-400'    },
+      { bg: 'bg-emerald-700', text: 'text-emerald-400' },
+      { bg: 'bg-rose-700',    text: 'text-rose-400'    },
+      { bg: 'bg-amber-700',   text: 'text-amber-400'   },
+      { bg: 'bg-pink-700',    text: 'text-pink-400'    },
+      { bg: 'bg-teal-700',    text: 'text-teal-400'    },
+    ];
+
+    function speakerIdx(name) {
+      let h = 0;
+      for (let i = 0; i < name.length; i++) {
+        h = Math.imul(h ^ name.charCodeAt(i), 0x9e3779b1) | 0;
+      }
+      return Math.abs(h) % SPEAKER_COLORS.length;
+    }
+
+    // ─── 主应用 ───
+    function app() {
+      return {
+        view: 'sessions',
+        sessions: [],
+        currentSession: null,
+        entries: [],
+        transcriptions: {},  // { AudioFile: 'text' }
+        transcribing: {},    // { AudioFile: true }
+        loading: true,
+        isTranscribingAll: false,
+
+        // ── 初始化 ──
+        async init() {
+          await this.loadSessions();
+        },
+
+        // ── 加载会话列表 ──
+        async loadSessions() {
+          this.loading = true;
+          try {
+            const r = await fetch('/api/sessions');
+            if (!r.ok) throw new Error(r.statusText);
+            this.sessions = await r.json();
+            this.sessions.sort((a, b) => b.startTime.localeCompare(a.startTime));
+          } catch (e) {
+            console.error('加载会话列表失败', e);
+          }
+          this.loading = false;
+        },
+
+        // ── 打开单个会话 ──
+        async openSession(session) {
+          this.loading = true;
+          this.currentSession = session;
+          this.entries = [];
+          this.transcriptions = {};
+          this.transcribing = {};
+          try {
+            const r = await fetch(`/api/sessions/${session.id}`);
+            if (!r.ok) throw new Error(r.statusText);
+            const data = await r.json();
+            this.entries = data.sort((a, b) => a.StartOffsetMs - b.StartOffsetMs);
+          } catch (e) {
+            console.error('加载会话详情失败', e);
+          }
+          this.view = 'detail';
+          this.loading = false;
+        },
+
+        // ── 返回列表 ──
+        backToList() {
+          this.view = 'sessions';
+          this.currentSession = null;
+        },
+
+        // ── 单条转录 ──
+        async transcribeEntry(entry) {
+          const key = entry.AudioFile;
+          if (this.transcriptions[key] || this.transcribing[key]) return;
+          this.transcribing = { ...this.transcribing, [key]: true };
+          try {
+            const r = await fetch('/api/transcribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sessionId: this.currentSession.id,
+                filename: entry.AudioFile
+              })
+            });
+            const data = await r.json();
+            this.transcriptions = {
+              ...this.transcriptions,
+              [key]: data.text || data.error || '（转录结果为空）'
+            };
+          } catch (e) {
+            this.transcriptions = { ...this.transcriptions, [key]: '转录请求失败：' + e.message };
+          }
+          const t = { ...this.transcribing };
+          delete t[key];
+          this.transcribing = t;
+        },
+
+        // ── 批量转录 ──
+        async transcribeAll() {
+          if (this.isTranscribingAll) return;
+          this.isTranscribingAll = true;
+          for (const entry of this.entries) {
+            if (!this.transcriptions[entry.AudioFile]) {
+              await this.transcribeEntry(entry);
+            }
+          }
+          this.isTranscribingAll = false;
+        },
+
+        // ── 计算属性 ──
+        get uniqueSpeakers() {
+          return [...new Set(this.entries.map(e => e.ClientName))];
+        },
+        get totalDuration() {
+          if (!this.entries.length) return 0;
+          return Math.max(...this.entries.map(e => e.StartOffsetMs + e.DurationMs));
+        },
+        get transcribedCount() {
+          return Object.keys(this.transcriptions).length;
+        },
+
+        // ── 工具函数 ──
+        formatSessionTime(str) {
+          if (!str) return '';
+          // str: "20241215_143022"
+          const m = str.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/);
+          if (!m) return str;
+          return `${m[1]}-${m[2]}-${m[3]}  ${m[4]}:${m[5]}:${m[6]}`;
+        },
+
+        fmtOffset(ms) {
+          const sec = Math.floor(ms / 1000);
+          const m   = Math.floor(sec / 60);
+          const s   = (sec % 60).toString().padStart(2, '0');
+          return `+${m}:${s}`;
+        },
+
+        fmtDuration(ms) {
+          if (!ms || ms < 100) return '—';
+          if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+          const m = Math.floor(ms / 60000);
+          const s = Math.round((ms % 60000) / 1000);
+          return `${m}m ${s}s`;
+        },
+
+        speakerBg(name)   { return SPEAKER_COLORS[speakerIdx(name)].bg;   },
+        speakerText(name) { return SPEAKER_COLORS[speakerIdx(name)].text; },
+
+        audioUrl(entry) {
+          return `/api/audio/${this.currentSession.id}/${entry.AudioFile}`;
+        }
+      };
+    }
+  </script>
+</body>
+</html>
